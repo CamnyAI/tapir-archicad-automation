@@ -44,6 +44,8 @@
 #include "DocumentCreationCommands.hpp"
 #include "RevisionCommands.hpp"
 #include "NotificationCommands.hpp"
+#include "UserInputCommands.hpp"
+#include "EventLoopTasks.hpp"
 #include "DesignOptionCommands.hpp"
 #include "IFCCommands.hpp"
 #include "SolidElementOperationCommands.hpp"
@@ -183,6 +185,10 @@ GSErrCode RegisterInterface (void)
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU_RUNSCRIPT_5, 0, MenuCode_UserDef, MenuFlag_Default);
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU_RUNSCRIPT_6, 0, MenuCode_UserDef, MenuFlag_Default);
 
+    // Without it only StartUserInput and the selection notifications' merging of bursts are missing,
+    // so a failure does not stop the Add-On from loading.
+    EventLoopTasks::RegisterService ();
+
     return err;
 }
 
@@ -202,6 +208,7 @@ GSErrCode Initialize (void)
     err |= ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU_RUNSCRIPT_6, MenuCommandHandler);
     err |= TapirPalette::RegisterPaletteControlCallBack ();
     err |= ScriptUIPalette::RegisterPaletteControlCallBack ();
+    EventLoopTasks::InstallHandler ();
 
     // The Add-On is preloaded, so this runs before Archicad opens the first project.
     ApplyDialogAutoCloseFromEnvironment ();
@@ -247,6 +254,14 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<GetPolygonFromUserCommand> (
             applicationCommands, "1.7.4",
             "Waits for the user to input a polygon in the active Archicad window and returns its points and arcs."
+        );
+        err |= RegisterCommand<StartUserInputCommand> (
+            applicationCommands, "1.7.4",
+            "Starts GetPointFromUser, GetElementFromUser, GetLineFromUser or GetPolygonFromUser and answers at once with an inputId, instead of keeping the JSON command open until the click. The result is pushed to the notification clients registered with notifyOnUserInput (SetElementNotificationClient) when the input ends, and GetUserInputResult returns it afterwards. While Archicad waits for the user, it refuses every JSON command at once with error 4001 (\"ongoing user input\") instead of queueing it; an optional timeout cancels the input, as Escape would. One input at a time."
+        );
+        err |= RegisterCommand<GetUserInputResultCommand> (
+            applicationCommands, "1.7.4",
+            "Returns the input started last by StartUserInput once it ended: the answer its command gives when called directly, and whether its timeout cancelled it."
         );
         err |= RegisterCommand<GetCurrentWindowTypeCommand> (
             applicationCommands, "1.0.7",
@@ -1016,7 +1031,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<AddElementNotificationClientCommand> (
             elementCommands, "1.2.8",
-            "Sets up a new notification client to receive element events."
+            "Sets up a new notification client to receive element events. Optionally (notifyOnSelectionChange, notifyOnProjectEvents, notifyOnUserInput) it also receives the selection after each change, project events (save, open, close, new, Teamwork send and receive, window and story changes) and the results of StartUserInput, posted to /element_notification like the element events."
         );
         err |= RegisterCommand<RemoveElementNotificationClientCommand> (
             elementCommands, "1.2.8",
@@ -2626,6 +2641,7 @@ GSErrCode FreeData (void)
     // A palette script still running at quit kept its output reader thread alive after the add-on was unloaded,
     // and Archicad crashed in that thread (GS::Process::GetStandardErrorChannel on the destroyed palette).
     TapirPalette::StopRunningScriptOnQuit ();
+    StartUserInputCommand::StopTimer ();
     // Must run here, not left to the static GS::Ref's destructor at DLL/dylib unload time - see
     // ScriptUIPalette::Release for why (real macOS crash on quit, EXC_BAD_ACCESS tearing down the
     // browser control after Archicad's own environment had already begun shutting down).

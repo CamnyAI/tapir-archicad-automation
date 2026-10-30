@@ -10,7 +10,10 @@
 #include "IChannelX.hpp"
 #include "ObjectStateJSONConversion.hpp"
 
+#include <string>
+
 #include "MigrationHelper.hpp"
+#include "EventLoopTasks.hpp"
 
 static
 GS::String ElementEventTypeToString (AddElementNotificationClientCommand::ElementEventType eventType)
@@ -70,7 +73,14 @@ std::map<GS::UniString, AddElementNotificationClientCommand::Client> AddElementN
 bool AddElementNotificationClientCommand::hasClientToNotifyOnNew = false;
 bool AddElementNotificationClientCommand::hasClientToNotifyOnModification = false;
 bool AddElementNotificationClientCommand::hasClientToNotifyOnReservationChanges = false;
+bool AddElementNotificationClientCommand::hasClientToNotifyOnSelectionChange = false;
+bool AddElementNotificationClientCommand::hasClientToNotifyOnProjectEvents = false;
 std::unique_ptr<AddElementNotificationClientCommand::EventQueue> AddElementNotificationClientCommand::queuedEvents;
+GS::HashTable<API_Guid, GS::Pair<API_ElemTypeID, API_Guid>> AddElementNotificationClientCommand::trackedHostedElements;
+bool AddElementNotificationClientCommand::selectionEventScheduled = false;
+bool AddElementNotificationClientCommand::hasLastSentSelection = false;
+UInt64 AddElementNotificationClientCommand::lastSentSelectionFingerprint = 0;
+UInt32 AddElementNotificationClientCommand::eventSequence = 0;
 GS::Thread AddElementNotificationClientCommand::messageSenderThread;
 
 void AddElementNotificationClientCommand::Client::Send(HTTP::Client::Request& request, const GS::UniString* body)
@@ -80,7 +90,10 @@ void AddElementNotificationClientCommand::Client::Send(HTTP::Client::Request& re
         clientConnection.SetKeepAlive (false);
         clientConnection.SetTimeout (100); // 0.1 seconds
         clientConnection.Connect ();
-        clientConnection.Send (request, body->ToCStr ().Get (), body->GetLength ());
+        // The length in bytes of the UTF-8 text, not in characters: a body with non-ASCII text
+        // (a Teamwork user name) was cut short.
+        const std::string utf8Body (body->ToCStr (CC_UTF8).Get ());
+        clientConnection.Send (request, utf8Body.c_str (), (USize) utf8Body.size ());
         clientConnection.Close (true);
     } catch (const GS::Exception& e) {
         e.Print (dbChannel);
@@ -122,6 +135,23 @@ GS::Optional<GS::UniString> AddElementNotificationClientCommand::GetInputParamet
             "notifyOnReservationChanges": {
                 "type": "boolean",
                 "description": "Notify on reservation changes of an element. Optional parameter, by default true."
+            },
+            "notifyOnSelectionChange": {
+                "type": "boolean",
+                "description": "Notify when the selection changes: the message has a selectionChanged object with a sequence number, the number of selected elements (selectedCount), the ids and types of the selected elements, at most maxSelectedElementIds of them, and truncated when more are selected. A burst of changes (a command that selects many elements, a marquee) gives one message with the selection after it, and a change that leaves the same elements selected gives none. Optional parameter, by default false. A client that only wants these sets notifyOnNewElement, notifyOnModificationOfAnElement and notifyOnReservationChanges to false."
+            },
+            "maxSelectedElementIds": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "The most element ids a selectionChanged message lists; selectedCount always gives the full number. Optional parameter, by default 1000."
+            },
+            "notifyOnProjectEvents": {
+                "type": "boolean",
+                "description": "Notify on project events: the message has a projectEvent object with a sequence number and the event, one of New, NewAndReset, Open, PreSave, Save, Close, Quit, SendChanges, ReceiveChanges (Teamwork), ChangeProjectDB (with a cause: Other, StoriesEdited or Merge), ChangeWindow, ChangeFloor (another story), ChangeLibrary, AllInputFinished (an open or merge finished). Autosaves are not reported: Archicad runs one after almost every change. Optional parameter, by default false."
+            },
+            "notifyOnUserInput": {
+                "type": "boolean",
+                "description": "Notify when an input started by StartUserInput finishes: the message has a userInputFinished object with a sequence number, the inputId, the command and its result. Optional parameter, by default false."
             }
         },
         "additionalProperties": false,
@@ -161,9 +191,29 @@ GS::ObjectState AddElementNotificationClientCommand::Execute (const GS::ObjectSt
     bool notifyOnReservationChanges = true;
     parameters.Get ("notifyOnReservationChanges", notifyOnReservationChanges);
 
+    bool notifyOnSelectionChange = false;
+    parameters.Get ("notifyOnSelectionChange", notifyOnSelectionChange);
+
+    Int32 maxSelectedElementIds = 1000;
+    parameters.Get ("maxSelectedElementIds", maxSelectedElementIds);
+    if (maxSelectedElementIds < 0) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "maxSelectedElementIds cannot be negative.");
+    }
+
+    bool notifyOnProjectEvents = false;
+    parameters.Get ("notifyOnProjectEvents", notifyOnProjectEvents);
+
+    bool notifyOnUserInput = false;
+    parameters.Get ("notifyOnUserInput", notifyOnUserInput);
+
     const GS::UniString connectionUrlStr = GS::UniString::Printf ("http://%T:%d/", host.ToPrintf (), port);
     const IO::URI::URI connectionUrl (connectionUrlStr);
     auto result = clients.emplace(std::piecewise_construct, std::forward_as_tuple(connectionUrlStr), std::forward_as_tuple(connectionUrl, notifyOnNew, notifyOnModification, notifyOnReservationChanges));
+    Client& client = result.first->second;
+    client.notifyOnSelectionChange = notifyOnSelectionChange;
+    client.maxSelectedElementIds = maxSelectedElementIds;
+    client.notifyOnProjectEvents = notifyOnProjectEvents;
+    client.notifyOnUserInput = notifyOnUserInput;
     if (!result.second) {
         result.first->second.notifyOnNew = notifyOnNew;
         result.first->second.notifyOnModification = notifyOnModification;
@@ -180,11 +230,7 @@ GS::ObjectState AddElementNotificationClientCommand::Execute (const GS::ObjectSt
     }
 
     if (notifyOnModification && !hasClientToNotifyOnModification) {
-        GS::Array<API_Guid> elementIds;
-        ACAPI_Element_GetElemList (API_ZombieElemID, &elementIds);
-        for (const auto& elemId : elementIds) {
-            ACAPI_Element_AttachObserver (elemId);
-        }
+        AttachObserversToAllElements ();
         hasClientToNotifyOnModification = true;
     }
 
@@ -195,7 +241,32 @@ GS::ObjectState AddElementNotificationClientCommand::Execute (const GS::ObjectSt
 
     ACAPI_Element_InstallElementObserver (ElementEventHandlerProc);
 
+    if (notifyOnSelectionChange) {
+        // A client registered now gets the next selection even when it is the one sent last.
+        hasLastSentSelection = false;
+    }
+    UpdateSelectionAndProjectEventHandlers ();
+
     return CreateSuccessfulExecutionResult ();
+}
+
+void
+AddElementNotificationClientCommand::AttachObserversToAllElements ()
+{
+    GS::Array<API_Guid> elementIds;
+    ACAPI_Element_GetElemList (API_ZombieElemID, &elementIds);
+    for (const auto& elemId : elementIds) {
+        ACAPI_Element_AttachObserver (elemId);
+    }
+
+    trackedHostedElements.Clear ();
+    for (API_ElemTypeID typeID : { API_DoorID, API_WindowID, API_SkylightID }) {
+        GS::Array<API_Guid> hostedIds;
+        ACAPI_Element_GetElemList (typeID, &hostedIds);
+        for (const auto& elemId : hostedIds) {
+            TrackHostedElement (elemId, typeID);
+        }
+    }
 }
 
 void
@@ -218,6 +289,7 @@ AddElementNotificationClientCommand::DetachElementObserversIfNotNeeded ()
     for (const auto& elemId : elementIds) {
         ACAPI_Element_DetachObserver (elemId);
     }
+    trackedHostedElements.Clear ();
     hasClientToNotifyOnModification = false;
 }
 
@@ -299,6 +371,7 @@ AddElementNotificationClientCommand::ElementEventHandlerProc (const API_NotifyEl
                 SendEventToNotificationClient (ElementEventType::New, message);
                 if (hasClientToNotifyOnModification) {
                     ACAPI_Element_AttachObserver (elemType->elemHead.guid);
+                    TrackHostedElement (elemType->elemHead.guid, typeID);
                 }
                 break;
 
@@ -309,12 +382,18 @@ AddElementNotificationClientCommand::ElementEventHandlerProc (const API_NotifyEl
             case APINotifyElement_PropertyValueChange:
             case APINotifyElement_ClassificationChange:
                 SendEventToNotificationClient (ElementEventType::Changed, message);
+                // An undone deletion of a wall brings its doors and windows back as changed.
+                if (hasClientToNotifyOnModification && !trackedHostedElements.ContainsKey (elemType->elemHead.guid)) {
+                    TrackHostedElement (elemType->elemHead.guid, typeID);
+                }
                 break;
 
             case APINotifyElement_Delete:
             case APINotifyElement_Undo_Created:
             case APINotifyElement_Redo_Deleted:
                 SendEventToNotificationClient (ElementEventType::Deleted, message);
+                trackedHostedElements.Delete (elemType->elemHead.guid);
+                SendDeletedHostedElements (elemType->elemHead.guid);
                 break;
 
             default:
@@ -435,6 +514,287 @@ GS::ObjectState RemoveElementNotificationClientCommand::Execute (const GS::Objec
     }
 
     AddElementNotificationClientCommand::DetachElementObserversIfNotNeeded ();
+    AddElementNotificationClientCommand::UpdateSelectionAndProjectEventHandlers ();
 
     return CreateSuccessfulExecutionResult ();
+}
+
+// ---------------------------------------------------------------------------
+// Doors, windows, skylights and openings deleted with their host element
+// ---------------------------------------------------------------------------
+
+bool
+AddElementNotificationClientCommand::IsHostedElementType (API_ElemTypeID typeID)
+{
+    return typeID == API_DoorID || typeID == API_WindowID || typeID == API_SkylightID;
+}
+
+void
+AddElementNotificationClientCommand::TrackHostedElement (const API_Guid& guid, API_ElemTypeID typeID)
+{
+    if (!IsHostedElementType (typeID)) {
+        return;
+    }
+    API_Element element = {};
+    element.header.guid = guid;
+    if (ACAPI_Element_Get (&element) != NoError) {
+        return;
+    }
+    // A door is a window in the API (API_DoorType is API_WindowType).
+    const API_Guid owner = (typeID == API_SkylightID) ? element.skylight.owner : element.window.owner;
+    if (owner != APINULLGuid) {
+        trackedHostedElements.Put (guid, GS::Pair<API_ElemTypeID, API_Guid> (typeID, owner));
+    }
+}
+
+void
+AddElementNotificationClientCommand::SendDeletedHostedElements (const API_Guid& deletedHostGuid)
+{
+    // Archicad deletes the doors, windows and skylights of a deleted wall, roof or shell with it,
+    // but notifies their observers of nothing. They are reported as deleted with their host.
+    GS::Array<GS::Pair<API_Guid, API_ElemTypeID>> hosted;
+    for (const auto& kv : trackedHostedElements) {
+#ifdef ServerMainVers_2800
+        const API_Guid& guid = kv.key;
+        const GS::Pair<API_ElemTypeID, API_Guid>& typeAndOwner = kv.value;
+#else
+        const API_Guid& guid = *kv.key;
+        const GS::Pair<API_ElemTypeID, API_Guid>& typeAndOwner = *kv.value;
+#endif
+        if (typeAndOwner.second == deletedHostGuid) {
+            hosted.Push (GS::Pair<API_Guid, API_ElemTypeID> (guid, typeAndOwner.first));
+        }
+    }
+
+    for (const auto& guidAndType : hosted) {
+        trackedHostedElements.Delete (guidAndType.first);
+        GS::ObjectState message (
+            "elementId", CreateGuidObjectState (guidAndType.first),
+            "elementType", GetElementTypeNonLocalizedName (guidAndType.second));
+        SendEventToNotificationClient (ElementEventType::Deleted, message);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Selection, project and user input events
+// ---------------------------------------------------------------------------
+
+// Not APINotify_TempSave: Archicad autosaves after almost every change.
+static const GSFlags NotifiedProjectEvents =
+    APINotify_New | APINotify_NewAndReset | APINotify_Open | APINotify_PreSave | APINotify_Save |
+    APINotify_Close | APINotify_Quit | APINotify_SendChanges | APINotify_ReceiveChanges |
+    APINotify_ChangeProjectDB | APINotify_ChangeWindow | APINotify_ChangeFloor | APINotify_ChangeLibrary |
+    APINotify_AllInputFinished;
+
+static bool projectEventHandlerInstalled = false;
+
+static GS::UniString
+ProjectEventName (API_NotifyEventID notifID)
+{
+    switch (notifID) {
+        case APINotify_New:              return "New";
+        case APINotify_NewAndReset:      return "NewAndReset";
+        case APINotify_Open:             return "Open";
+        case APINotify_PreSave:          return "PreSave";
+        case APINotify_Save:             return "Save";
+        case APINotify_Close:            return "Close";
+        case APINotify_Quit:             return "Quit";
+        case APINotify_SendChanges:      return "SendChanges";
+        case APINotify_ReceiveChanges:   return "ReceiveChanges";
+        case APINotify_ChangeProjectDB:  return "ChangeProjectDB";
+        case APINotify_ChangeWindow:     return "ChangeWindow";
+        case APINotify_ChangeFloor:      return "ChangeFloor";
+        case APINotify_ChangeLibrary:    return "ChangeLibrary";
+        case APINotify_AllInputFinished: return "AllInputFinished";
+        default:                         return GS::UniString ();
+    }
+}
+
+// Order independent, so the same elements selected in another order count as the same selection.
+static UInt64
+SelectionFingerprint (const GS::Array<API_Guid>& guids)
+{
+    UInt64 sum = 0;
+    for (const API_Guid& guid : guids) {
+        const unsigned char* bytes = reinterpret_cast<const unsigned char*> (&guid);
+        UInt64 hash = 14695981039346656037ULL;
+        for (size_t i = 0; i < sizeof (API_Guid); ++i) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ULL;
+        }
+        sum += hash;
+    }
+    return sum ^ (static_cast<UInt64> (guids.GetSize ()) * 0x9E3779B97F4A7C15ULL);
+}
+
+UInt32
+AddElementNotificationClientCommand::NextEventSequence ()
+{
+    return ++eventSequence;
+}
+
+void
+AddElementNotificationClientCommand::UpdateSelectionAndProjectEventHandlers ()
+{
+    bool wantsSelection = false;
+    bool wantsProjectEvents = false;
+    for (const auto& kv : clients) {
+        wantsSelection = wantsSelection || kv.second.notifyOnSelectionChange;
+        wantsProjectEvents = wantsProjectEvents || kv.second.notifyOnProjectEvents;
+    }
+
+    if (wantsSelection != hasClientToNotifyOnSelectionChange) {
+        ACAPI_Notification_CatchSelectionChange (wantsSelection ? SelectionChangeHandlerProc : nullptr);
+        hasClientToNotifyOnSelectionChange = wantsSelection;
+        hasLastSentSelection = false;
+    }
+    hasClientToNotifyOnProjectEvents = wantsProjectEvents;
+
+    // The project events also keep the observers and the tracked hosted elements in step with the
+    // project that is open, so they are caught while any client needs those.
+    const bool needsProjectEvents = wantsProjectEvents || wantsSelection || hasClientToNotifyOnModification;
+    if (needsProjectEvents != projectEventHandlerInstalled) {
+        ACAPI_ProjectOperation_CatchProjectEvent (NotifiedProjectEvents, needsProjectEvents ? ProjectEventHandlerProc : nullptr);
+        projectEventHandlerInstalled = needsProjectEvents;
+    }
+}
+
+GSErrCode
+AddElementNotificationClientCommand::SelectionChangeHandlerProc (const API_Neig* /*selElemNeig*/)
+{
+    // Archicad notifies every step of a selection change (each element a command or a marquee
+    // selects). The event is sent once, from the event loop after those steps, with the selection
+    // they left.
+    if (!hasClientToNotifyOnSelectionChange || selectionEventScheduled) {
+        return NoError;
+    }
+    selectionEventScheduled = true;
+    const bool posted = EventLoopTasks::Post ([] () {
+        selectionEventScheduled = false;
+        SendSelectionChangedEvent ();
+    });
+    if (!posted) {
+        selectionEventScheduled = false;
+        SendSelectionChangedEvent ();
+    }
+    return NoError;
+}
+
+void
+AddElementNotificationClientCommand::SendSelectionChangedEvent ()
+{
+    if (!hasClientToNotifyOnSelectionChange) {
+        return;
+    }
+
+    API_SelectionInfo   selectionInfo = {};
+    GS::Array<API_Neig> selectedNeigs;
+    const GSErrCode err = ACAPI_Selection_Get (&selectionInfo, &selectedNeigs, false);
+    BMKillHandle ((GSHandle*) &selectionInfo.marquee.coords);
+    if (err != NoError && err != APIERR_NOSEL) {
+        return;
+    }
+
+    // The same ids as GetSelectedElements: a selected section element stands for its model element.
+    GS::Array<API_Guid>   selectedIds;
+    GS::HashSet<API_Guid> seen;
+    if (err == NoError && selectionInfo.typeID != API_SelEmpty) {
+        for (const API_Neig& neig : selectedNeigs) {
+            const API_Guid guid = GetParentElemOfSectElem (neig.guid);
+            if (guid != APINULLGuid && !seen.Contains (guid)) {
+                seen.Add (guid);
+                selectedIds.Push (guid);
+            }
+        }
+    }
+
+    const UInt64 fingerprint = SelectionFingerprint (selectedIds);
+    if (hasLastSentSelection && fingerprint == lastSentSelectionFingerprint) {
+        return;
+    }
+    hasLastSentSelection = true;
+    lastSentSelectionFingerprint = fingerprint;
+
+    USize listedCount = 0;
+    for (const auto& kv : clients) {
+        if (kv.second.notifyOnSelectionChange) {
+            listedCount = GS::Max (listedCount, GS::Min (selectedIds.GetSize (), (USize) kv.second.maxSelectedElementIds));
+        }
+    }
+    GS::Array<GS::ObjectState> listedElements;
+    for (UIndex i = 0; i < listedCount; ++i) {
+        listedElements.Push (GS::ObjectState (
+            "elementId", CreateGuidObjectState (selectedIds[i]),
+            "elementType", GetElementTypeNonLocalizedName (GetElemTypeID (selectedIds[i]))));
+    }
+
+    const UInt32 sequence = NextEventSequence ();
+    for (auto& kv : clients) {
+        Client& client = kv.second;
+        if (!client.notifyOnSelectionChange) {
+            continue;
+        }
+        const USize count = GS::Min (selectedIds.GetSize (), (USize) client.maxSelectedElementIds);
+        GS::ObjectState event ("sequence", sequence, "selectedCount", (UInt32) selectedIds.GetSize ());
+        const auto& elements = event.AddList<GS::ObjectState> ("elements");
+        for (UIndex i = 0; i < count; ++i) {
+            elements (listedElements[i]);
+        }
+        event.Add ("truncated", count < selectedIds.GetSize ());
+        SendMessageToNotificationClient (client, GS::ObjectState ("selectionChanged", event));
+    }
+}
+
+GSErrCode
+AddElementNotificationClientCommand::ProjectEventHandlerProc (API_NotifyEventID notifID, Int32 param)
+{
+    switch (notifID) {
+        case APINotify_Close:
+            trackedHostedElements.Clear ();
+            hasLastSentSelection = false;
+            break;
+        case APINotify_New:
+        case APINotify_NewAndReset:
+        case APINotify_Open:
+            // The observers belong to the elements of the project that was open before.
+            hasLastSentSelection = false;
+            if (hasClientToNotifyOnModification) {
+                AttachObserversToAllElements ();
+            }
+            break;
+        default:
+            break;
+    }
+
+    if (!hasClientToNotifyOnProjectEvents) {
+        return NoError;
+    }
+    const GS::UniString eventName = ProjectEventName (notifID);
+    if (eventName.IsEmpty ()) {
+        return NoError;
+    }
+
+    GS::ObjectState event ("sequence", NextEventSequence (), "event", eventName);
+    if (notifID == APINotify_ChangeProjectDB) {
+        event.Add ("cause", GS::UniString (param == 1 ? "StoriesEdited" : (param == 2 ? "Merge" : "Other")));
+    }
+    const GS::ObjectState message ("projectEvent", event);
+    for (auto& kv : clients) {
+        if (kv.second.notifyOnProjectEvents) {
+            SendMessageToNotificationClient (kv.second, message);
+        }
+    }
+    return NoError;
+}
+
+void
+AddElementNotificationClientCommand::SendUserInputFinishedEvent (GS::ObjectState event)
+{
+    event.Add ("sequence", NextEventSequence ());
+    const GS::ObjectState message ("userInputFinished", event);
+    for (auto& kv : clients) {
+        if (kv.second.notifyOnUserInput) {
+            SendMessageToNotificationClient (kv.second, message);
+        }
+    }
 }

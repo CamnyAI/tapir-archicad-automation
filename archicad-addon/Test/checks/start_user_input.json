@@ -1,0 +1,39 @@
+{
+  "title": "StartUserInput checks the parameters of its input at once; GetUserInputResult keeps only the input started last",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "an unknown element type for GetElementFromUser is refused before any input starts",
+      "command": "StartUserInput",
+      "creates": false,
+      "params": {
+        "command": "GetElementFromUser",
+        "parameters": {"elementTypes": ["Wall", "NoSuchElementType"]},
+        "timeout": 1
+      },
+      "expect": [
+        {"path": "error.code", "exists": true},
+        {"path": "error.message", "contains": "NoSuchElementType"},
+        {"path": "inputId", "exists": false}
+      ]
+    },
+    {
+      "id": "an inputId that was never returned is an error",
+      "command": "GetUserInputResult",
+      "creates": false,
+      "params": {"inputId": 987654},
+      "expect": [
+        {"path": "error.code", "exists": true}
+      ]
+    },
+    {
+      "id": "Archicad still answers: no input was left waiting",
+      "command": "GetAddOnVersion",
+      "creates": false,
+      "params": {},
+      "expect": [
+        {"path": "version", "exists": true}
+      ]
+    }
+  ]
+}
