@@ -1025,68 +1025,90 @@ std::vector<PolygonPiece> CutPolygonByLine (const API_ElementMemo& memo, const A
     return pieces;
 }
 
+// The memo of a new slab or hatch piece. The memo builder of CreateSlabs fills in the edge data
+// along the new polygon; it gets an empty memo, so it allocates every handle at the size of the
+// piece (it reuses handles it is given when the element's own counts match the new ones).
+bool BuildPolygonPieceMemo (API_Element& element, API_ElementMemo& memo, PolygonPiece& piece)
+{
+    if (GetElemTypeId (element.header) == API_SlabID) {
+        return !BuildSlabMemoFromGeometry (element, memo, piece.outline, piece.arcs, piece.holes).HasValue ();
+    }
+    return BuildHatchPolygonMemo (piece.outline, piece.arcs, piece.holes, element.hatch.poly, memo);
+}
+
+// The original slab gets its new polygon the way ModifySlabs writes one (ApplySlabPolygonChange
+// and ACAPI_Element_ChangeMemo): a polygon rebuilt from scratch is refused (APIERR_BADPOLY) once
+// the number of vertices changes. A hatch takes its rebuilt polygon with ACAPI_Element_Change.
+GSErrCode ChangeToPolygonPiece (const ElementData& data, PolygonPiece& piece)
+{
+    API_ElementMemo memo = {};
+    const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+    if (GetElemTypeId (data.element.header) == API_SlabID) {
+        ACAPI_Element_GetMemo (data.guid, &memo);
+        if (ApplySlabPolygonChange (memo, data.element.slab.sideMat, piece.outline, piece.arcs, piece.holes).HasValue ()) {
+            return APIERR_BADPOLY;
+        }
+        API_Guid guid = data.guid;
+        return ACAPI_Element_ChangeMemo (guid, APIMemoMask_Polygon | APIMemoMask_EdgeTrims | APIMemoMask_SideMaterials, &memo);
+    }
+    API_Element element = data.element;
+    API_Element mask;
+    ACAPI_ELEMENT_MASK_CLEAR (mask);
+    if (!BuildHatchPolygonMemo (piece.outline, piece.arcs, piece.holes, element.hatch.poly, memo)) {
+        return APIERR_MEMFULL;
+    }
+    ACAPI_ELEMENT_MASK_SET (mask, API_HatchType, poly);
+    return ACAPI_Element_Change (&element, &mask, &memo, APIMemoMask_Polygon, true);
+}
+
 GS::ObjectState SplitPolygonElement (ElementData& data, const API_Coord& linePoint, const API_Coord& lineDir)
 {
-    const bool isSlab = GetElemTypeId (data.element.header) == API_SlabID;
     std::vector<PolygonPiece> pieces = CutPolygonByLine (data.memo, linePoint, lineDir);
     if (pieces.size () < 2) {
         return CreateErrorResponse (APIERR_BADPARS, "The split line does not cross the element.");
     }
 
+    // ApplySlabPolygonChange adds outline vertices by splitting an edge, which keeps the outline
+    // valid, but removes them one by one, which can leave an intermediate outline that crosses
+    // itself: Archicad then refuses it, and with a concave outline it corrupted the heap (Archicad 30
+    // crashed in the next allocation). So the original slab keeps the first piece with at least as
+    // many outline vertices as it has, and when there is none, every piece becomes a new slab and
+    // the original is deleted at the end; the same happens when Archicad refuses the new polygon.
+    const bool isSlab = GetElemTypeId (data.element.header) == API_SlabID;
+    const Int32 originalOutlineCount = HandleItemCount (data.memo.pends) >= 2 ? (*data.memo.pends)[1] - 1 : 0;
+    bool canKeepOriginal = !isSlab;
+    for (size_t k = 0; isSlab && k < pieces.size (); ++k) {
+        if ((Int32) pieces[k].outline.GetSize () >= originalOutlineCount) {
+            std::rotate (pieces.begin (), pieces.begin () + k, pieces.begin () + k + 1);
+            canKeepOriginal = true;
+            break;
+        }
+    }
+
+    const bool originalChanged = canKeepOriginal && ChangeToPolygonPiece (data, pieces[0]) == NoError;
     std::vector<API_Guid> pieceGuids;
-    for (size_t k = 0; k < pieces.size (); ++k) {
-        PolygonPiece& piece = pieces[k];
+    if (originalChanged) {
+        pieceGuids.push_back (data.guid);
+    }
+    for (size_t k = originalChanged ? 1 : 0; k < pieces.size (); ++k) {
         API_Element pieceElement = data.element;
-        API_Element mask;
-        ACAPI_ELEMENT_MASK_CLEAR (mask);
         API_ElementMemo pieceMemo = {};
         const GS::OnExit memoGuard ([&pieceMemo] () { ACAPI_DisposeElemMemoHdls (&pieceMemo); });
-        UInt64 memoMask = APIMemoMask_Polygon;
-        if (isSlab && k == 0) {
-            // The original slab gets its new polygon the way ModifySlabs writes one: a polygon
-            // rebuilt from scratch is refused (APIERR_BADPOLY) once the number of vertices changes.
-            ACAPI_Element_GetMemo (data.guid, &pieceMemo);
-            const GS::Optional<GS::UniString> memoError = ApplySlabPolygonChange (pieceMemo, data.element.slab.sideMat, piece.outline, piece.arcs, piece.holes);
-            if (memoError.HasValue ()) {
-                return CreateErrorResponse (APIERR_GENERAL, "The slab could not be changed to its first piece: " + *memoError);
-            }
-            memoMask |= APIMemoMask_EdgeTrims | APIMemoMask_SideMaterials;
-        } else if (isSlab) {
-            // The memo builder of CreateSlabs fills in the edge data along the new polygon. It gets an
-            // empty memo, so it allocates every handle at the size of the piece: it reuses handles it
-            // is given when the element's own counts match the new ones, and the original's counts
-            // are not those of its memo once the original became its first piece.
-            const GS::Optional<GS::UniString> memoError = BuildSlabMemoFromGeometry (pieceElement, pieceMemo, piece.outline, piece.arcs, piece.holes);
-            if (memoError.HasValue ()) {
-                return CreateErrorResponse (APIERR_GENERAL, "A piece of the slab could not be made: " + *memoError);
-            }
-        } else {
-            if (!BuildHatchPolygonMemo (piece.outline, piece.arcs, piece.holes, pieceElement.hatch.poly, pieceMemo)) {
-                return CreateErrorResponse (APIERR_MEMFULL, "A piece of the hatch could not be made.");
-            }
-            ACAPI_ELEMENT_MASK_SET (mask, API_HatchType, poly);
-        }
-
-        GSErrCode err = NoError;
-        if (k == 0) {
-            if (isSlab) {
-                API_Guid changedGuid = data.guid;
-                err = ACAPI_Element_ChangeMemo (changedGuid, memoMask, &pieceMemo);
-            } else {
-                err = ACAPI_Element_Change (&pieceElement, &mask, &pieceMemo, memoMask, true);
-            }
-            if (err != NoError) {
-                return CreateErrorResponse (err, "Failed to change the element to its first piece.");
-            }
-            pieceGuids.push_back (data.guid);
-            continue;
+        if (!BuildPolygonPieceMemo (pieceElement, pieceMemo, pieces[k])) {
+            return CreateErrorResponse (APIERR_GENERAL, GS::UniString::Printf ("The polygon of piece %u could not be made.", (unsigned) (k + 1)));
         }
         API_Guid newGuid = APINULLGuid;
-        err = CreateCopy (data, pieceElement, &pieceMemo, newGuid);
+        const GSErrCode err = CreateCopy (data, pieceElement, &pieceMemo, newGuid);
         if (err != NoError) {
-            return CreateErrorResponse (err, GS::UniString::Printf ("The element was changed to its first piece, but piece %u could not be created.", (unsigned) (k + 1)));
+            return CreateErrorResponse (err, GS::UniString::Printf ("Piece %u of the element could not be created.", (unsigned) (k + 1)));
         }
         pieceGuids.push_back (newGuid);
+    }
+    if (!originalChanged) {
+        const GSErrCode err = ACAPI_Element_Delete ({ data.guid });
+        if (err != NoError) {
+            return CreateErrorResponse (err, "The pieces were created as new elements, but the original could not be deleted.");
+        }
     }
 
     return CreateElementsWrapper (pieceGuids);
@@ -1186,7 +1208,7 @@ GS::Optional<GS::UniString> SplitElementsCommand::GetRawResponseSchema () const
         "properties": {
             "piecesOfElements": {
                 "type": "array",
-                "description": "The pieces of each element in the order of the input; the first one is the original element itself. The pieces of a wall, beam, line, arc or polyline are in order along it from its beginning; those of a slab or hatch on the right of the split line (looking from begCoordinate to endCoordinate) come before those on its left. An element the split line does not cross, or that cannot be split, gets an error.",
+                "description": "The pieces of each element in the order of the input; the first one is the original element itself. The pieces of a wall, beam, line, arc or polyline are in order along it from its beginning. Of a slab or hatch, the pieces on the right of the split line (looking from begCoordinate to endCoordinate) come before those on its left, except that a slab keeps the first piece with at least as many outline vertices as it had; when no piece has that many (vertices cannot be taken away from an existing slab safely), or Archicad refuses the new polygon, all pieces are new slabs and the original is deleted. An element the split line does not cross, or that cannot be split, gets an error.",
                 "items": {
                     "$ref": "#/ElementsWrapperOrError"
                 }
