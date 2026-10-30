@@ -1,0 +1,103 @@
+{
+  "title": "GetDrawingPrimitivesOfElements reads the floor plan from an elevation and the 3D window and leaves the window as it is",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "line",
+      "command": "CreateLineElements",
+      "params": {
+        "linesData": [
+          {
+            "begCoordinate": { "x": 700.0, "y": 710.0 },
+            "endCoordinate": { "x": 702.0, "y": 711.0 }
+          }
+        ]
+      },
+      "save": {
+        "line": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "an elevation of the template",
+      "command": "GetDatabases",
+      "creates": false,
+      "params": {
+        "types": [ "Elevation" ]
+      },
+      "save": {
+        "elevation": "databases[0].databaseId"
+      }
+    },
+    {
+      "id": "show the elevation",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": {
+        "databaseId": "${elevation}"
+      },
+      "expect": [
+        { "path": "success", "eq": true, "name": "accepted" }
+      ]
+    },
+    {
+      "id": "primitives from the elevation",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${line}" } } ]
+      },
+      "expect": [
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].type", "eq": "Line", "name": "the line is read" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].c2.x", "approx": 702.0, "name": "its end x" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].c2.y", "approx": 711.0, "name": "its end y" }
+      ]
+    },
+    {
+      "id": "the elevation is still shown",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        { "path": "currentWindowType", "eq": "Elevation", "name": "window unchanged" }
+      ]
+    },
+    {
+      "id": "show the 3D window",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": {
+        "windowType": "3DModel"
+      },
+      "expect": [
+        { "path": "success", "eq": true, "name": "accepted" }
+      ]
+    },
+    {
+      "id": "primitives from the 3D window",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${line}" } } ]
+      },
+      "expect": [
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].type", "eq": "Line", "name": "the line is read" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].c1.x", "approx": 700.0, "name": "its start x" }
+      ]
+    },
+    {
+      "id": "the 3D window is still shown",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        { "path": "currentWindowType", "eq": "3DModel", "name": "window unchanged" }
+      ]
+    }
+  ],
+  "teardown": [
+    {
+      "command": "ChangeWindow",
+      "params": {
+        "windowType": "FloorPlan"
+      }
+    }
+  ]
+}
