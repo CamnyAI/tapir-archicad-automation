@@ -9,13 +9,16 @@ set (AC_API_DEVKIT_DIR ${AC_API_DEVKIT_DIR} CACHE PATH "API DevKit directory.")
 set (AC_VERSION ${API_AC_VERSION} CACHE STRING "Archicad version.")
 
 SetGlobalCompilerDefinitions (${AC_VERSION})
+# Renzo's build: no Tapir update check and no "Check for Updates..." menu item, so Tapir's updater
+# never replaces this add-on with the official one.
+add_definitions (-DRENZO_ADDON)
 
 if (WIN32)
 	set (NamePostFix Win)
 else ()
 	set (NamePostFix Mac)
 endif ()
-set (AddOnName "TapirAddOn_AC${AC_VERSION}_${NamePostFix}")
+set (AddOnName "RenzoArchicad_AC${AC_VERSION}_${NamePostFix}")
 
 project (${AddOnName})
 
