@@ -1,6 +1,7 @@
 #include "ElementCommands.hpp"
 
 #include "ElementCreationCommands.hpp"
+#include "ElementDetailsReaders.hpp"
 #include "MigrationHelper.hpp"
 #include "GSUnID.hpp"
 #include "Plane.hpp"
@@ -1767,6 +1768,7 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
                     typeSpecificDetails.Add ("endAngle", elem.arc.endAng);
                 }
                 typeSpecificDetails.Add ("reflected", elem.arc.reflected);
+                typeSpecificDetails.Add ("isWhole", elem.arc.whole);
                 AddLineFamilySettingsDetails (typeSpecificDetails, elem.arc.linePen, elem.arc.ltypeInd, elem.arc.roomSeparator);
                 typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
             } break;
@@ -1794,6 +1796,7 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
                 typeSpecificDetails.Add ("closed", elem.spline.closed);
                 AddLineFamilySettingsDetails (typeSpecificDetails, elem.spline.linePen, elem.spline.ltypeInd, elem.spline.roomSeparator);
                 typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+                ElementDetailsReaders::AddSplineBezierDirections (elem, typeSpecificDetails);
             } break;
 
             case API_RailingID: {
@@ -2099,6 +2102,27 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
                 typeSpecificDetails.Add ("idStr", GS::UniString (elem.cutPlane.segment.cutPlIdStr));
                 AddSectionLinesFromMemo (elem.header.guid, static_cast<GSSize> (elem.cutPlane.segment.nMainCoord), static_cast<GSSize> (elem.cutPlane.segment.nDepthCoord), typeSpecificDetails);
             } break;
+
+            case API_SkylightID:
+                AddLibPartBasedElementDetails (typeSpecificDetails, elem.skylight.openingBase.libInd, elem.skylight.owner);
+                ElementDetailsReaders::AddSkylightDetails (elem, stories, typeSpecificDetails);
+                break;
+
+            case API_CameraID:
+                ElementDetailsReaders::AddCameraDetails (elem, typeSpecificDetails);
+                break;
+
+            case API_CamSetID:
+                ElementDetailsReaders::AddCameraSetDetails (elem, typeSpecificDetails);
+                break;
+
+            case API_ChangeMarkerID:
+                ElementDetailsReaders::AddChangeMarkerDetails (elem, typeSpecificDetails);
+                break;
+
+            case API_PictureID:
+                ElementDetailsReaders::AddPictureDetails (elem, typeSpecificDetails);
+                break;
 
             default:
                 typeSpecificDetails.Add ("error", "Not yet supported element type");

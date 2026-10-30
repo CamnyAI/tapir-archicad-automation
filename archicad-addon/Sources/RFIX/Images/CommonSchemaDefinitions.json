@@ -8688,7 +8688,7 @@
     },
     "ArcDetails": {
         "type": "object",
-        "description": "Geometry of an Arc or Circle element. begAngle/endAngle are only present for Arc (a Circle spans the full 0-2*PI range implicitly).",
+        "description": "Geometry of an Arc or Circle element. begAngle/endAngle are only present for Arc (a Circle spans the full 0-2*PI range implicitly). Archicad keeps a circle as a whole arc: one made by CreateCircles reads back with type Arc, isWhole true and begAngle and endAngle 0.",
         "properties": {
             "origin": {
                 "$ref": "#/Coordinate2D"
@@ -8714,6 +8714,10 @@
             },
             "reflected": {
                 "type": "boolean"
+            },
+            "isWhole": {
+                "type": "boolean",
+                "description": "True for a full circle or ellipse."
             },
             "roomSeparator": {
                 "type": "boolean",
@@ -8785,6 +8789,17 @@
             },
             "zCoordinate": {
                 "type": "number"
+            },
+            "autoSmooth": {
+                "type": "boolean",
+                "description": "True when Archicad smooths the curve itself from the point positions; false when the handles in bezierDirections were set point by point."
+            },
+            "bezierDirections": {
+                "type": "array",
+                "description": "The Bezier handle of each point, in the order of coordinates (one item per point). Absent when Archicad keeps no handles for the spline.",
+                "items": {
+                    "$ref": "#/BezierDirection"
+                }
             }
         },
         "additionalProperties": false,
@@ -8792,6 +8807,462 @@
             "coordinates",
             "closed",
             "zCoordinate"
+        ]
+    },
+    "BezierDirection": {
+        "type": "object",
+        "description": "The Bezier handle at a point of a curve: the tangent direction and the lengths of the handle before and after the point.",
+        "properties": {
+            "previousLength": {
+                "type": "number",
+                "description": "Length of the handle towards the previous point."
+            },
+            "nextLength": {
+                "type": "number",
+                "description": "Length of the handle towards the next point."
+            },
+            "angle": {
+                "type": "number",
+                "description": "Direction of the tangent at the point, in radians from the x axis."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "previousLength",
+            "nextLength",
+            "angle"
+        ]
+    },
+    "SkylightDetails": {
+        "type": "object",
+        "description": "A skylight placed in a roof or a shell. The frame and glazing of the skylight are parameters of its library part (GetGDLParametersOfElements).",
+        "properties": {
+            "libPart": {
+                "$ref": "#/LibPartDetails"
+            },
+            "ownerElementId": {
+                "$ref": "#/ElementId",
+                "description": "The roof or shell the skylight is placed in."
+            },
+            "ownerElementType": {
+                "$ref": "#/ElementType"
+            },
+            "width": {
+                "type": "number",
+                "description": "Width of the opening."
+            },
+            "height": {
+                "type": "number",
+                "description": "Length of the opening along the slope of the roof."
+            },
+            "anchorPoint": {
+                "type": "string",
+                "description": "The point of the skylight that anchorPosition and anchorLevel locate.",
+                "enum": [
+                    "BottomCenter",
+                    "BottomLeft",
+                    "BottomRight",
+                    "TopCenter",
+                    "TopLeft",
+                    "TopRight"
+                ]
+            },
+            "anchorPosition": {
+                "$ref": "#/Coordinate2D",
+                "description": "The plan position of the anchor point, in project coordinates."
+            },
+            "anchorLevel": {
+                "type": "number",
+                "description": "The elevation of the anchor point from the skylight's home story (floorIndex)."
+            },
+            "zCoordinate": {
+                "type": "number",
+                "description": "The elevation of the anchor point from the project zero."
+            },
+            "azimuthAngle": {
+                "type": "number",
+                "description": "Rotation of the skylight in the horizontal plane, in radians, measured clockwise."
+            },
+            "elevationAngle": {
+                "type": "number",
+                "description": "Slope of the roof at the skylight, in radians."
+            },
+            "fixMode": {
+                "type": "string",
+                "description": "What is kept when the slope or the elevation of the owner changes: the horizontal distance from the pivot line, or the elevation of the anchor point.",
+                "enum": [
+                    "Horizontal",
+                    "Vertical"
+                ]
+            },
+            "pivotPolygonVertexId": {
+                "type": "integer",
+                "description": "For a skylight in a multi-plane roof, the vertex of the pivot polygon its roof plane starts from; 0 for a single-plane roof."
+            },
+            "reflected": {
+                "type": "boolean",
+                "description": "Mirrored to the local Y axis."
+            },
+            "oSide": {
+                "type": "boolean",
+                "description": "Mirrored to the local X axis."
+            },
+            "refSide": {
+                "type": "boolean",
+                "description": "Mirrored to the local X axis (same as oSide)."
+            },
+            "displayOption": {
+                "$ref": "#/DisplayOption"
+            },
+            "pen": {
+                "type": "integer"
+            },
+            "lineTypeId": {
+                "$ref": "#/AttributeId"
+            },
+            "surfaceId": {
+                "$ref": "#/AttributeId"
+            },
+            "sectionFillId": {
+                "$ref": "#/AttributeId"
+            },
+            "sectionFillPen": {
+                "type": "integer"
+            },
+            "sectionFillBackgroundPen": {
+                "type": "integer"
+            },
+            "sectionContourPen": {
+                "type": "integer"
+            },
+            "cutLineTypeId": {
+                "$ref": "#/AttributeId",
+                "description": "Line type of the cut lines of the opening."
+            },
+            "aboveViewLinePen": {
+                "type": "integer",
+                "description": "Pen of the overhead lines."
+            },
+            "aboveViewLineTypeId": {
+                "$ref": "#/AttributeId",
+                "description": "Line type of the overhead lines."
+            },
+            "belowViewLinePen": {
+                "type": "integer",
+                "description": "Pen of the uncut lines."
+            },
+            "belowViewLineTypeId": {
+                "$ref": "#/AttributeId",
+                "description": "Line type of the uncut lines."
+            },
+            "useObjectPens": {
+                "type": "boolean"
+            },
+            "useObjectLineTypes": {
+                "type": "boolean"
+            },
+            "useObjectMaterials": {
+                "type": "boolean"
+            },
+            "useObjectSectionAttributes": {
+                "type": "boolean"
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "libPart",
+            "width",
+            "height",
+            "anchorPoint",
+            "anchorPosition",
+            "anchorLevel",
+            "zCoordinate",
+            "azimuthAngle",
+            "elevationAngle",
+            "fixMode"
+        ]
+    },
+    "CameraDetails": {
+        "type": "object",
+        "description": "A perspective camera of a camera set (path).",
+        "properties": {
+            "cameraSetId": {
+                "$ref": "#/ElementId",
+                "description": "The camera set (path) the camera belongs to."
+            },
+            "perspective": {
+                "$ref": "#/PerspectiveProjectionParameters",
+                "description": "The view of the camera, in the shape Set3DProjectionSettings takes."
+            },
+            "pen": {
+                "type": "integer"
+            },
+            "waitFrames": {
+                "type": "integer",
+                "description": "Number of frames the animation waits at this camera."
+            },
+            "isActive": {
+                "type": "boolean",
+                "description": "Whether the camera is active in the path."
+            },
+            "previousCameraId": {
+                "$ref": "#/ElementId",
+                "description": "The previous camera of the same set. Absent for the first one."
+            },
+            "nextCameraId": {
+                "$ref": "#/ElementId",
+                "description": "The next camera of the same set. Absent for the last one."
+            },
+            "pathDirection": {
+                "$ref": "#/BezierDirection",
+                "description": "The Bezier handle of the path at this camera."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "perspective",
+            "pen",
+            "waitFrames",
+            "isActive",
+            "pathDirection"
+        ]
+    },
+    "CameraSetDetails": {
+        "type": "object",
+        "description": "A camera set: a path of perspective cameras with its animation options (the Path Options dialog).",
+        "properties": {
+            "name": {
+                "type": "string"
+            },
+            "isActive": {
+                "type": "boolean",
+                "description": "Whether this is the active camera set."
+            },
+            "firstCameraId": {
+                "$ref": "#/ElementId",
+                "description": "The first camera of the set. Absent for an empty set."
+            },
+            "currentCameraId": {
+                "$ref": "#/ElementId",
+                "description": "The current camera of the set."
+            },
+            "pen": {
+                "type": "integer",
+                "description": "Pen of the cameras and the path."
+            },
+            "isOpenPath": {
+                "type": "boolean",
+                "description": "Whether the animation path is open (not closed)."
+            },
+            "isBezierPath": {
+                "type": "boolean",
+                "description": "Whether the in-between frames follow a Bezier path instead of a polygonal one."
+            },
+            "smoothTarget": {
+                "type": "boolean",
+                "description": "Whether the target moves along a smooth curve instead of straight lines."
+            },
+            "inBetweenFrames": {
+                "type": "integer",
+                "description": "Number of in-between frames."
+            },
+            "showFrom": {
+                "type": "integer",
+                "description": "Index of the first camera shown."
+            },
+            "showTo": {
+                "type": "integer",
+                "description": "Index of the last camera shown."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "name",
+            "isActive",
+            "pen",
+            "isOpenPath",
+            "isBezierPath",
+            "smoothTarget",
+            "inBetweenFrames",
+            "showFrom",
+            "showTo"
+        ]
+    },
+    "ChangeMarkerDetails": {
+        "type": "object",
+        "description": "A change marker: a marker head, a revision cloud or both, linked to a change of the Changes palette or unlinked.",
+        "properties": {
+            "linkType": {
+                "type": "string",
+                "description": "Whether the marker is linked to a change.",
+                "enum": [
+                    "Linked",
+                    "Unlinked",
+                    "CreateNewChange"
+                ]
+            },
+            "changeId": {
+                "type": "string",
+                "description": "The ID of the linked change. Present only when linkType is Linked."
+            },
+            "changeName": {
+                "type": "string",
+                "description": "The name of the linked change. Present only when linkType is Linked."
+            },
+            "markerComponent": {
+                "type": "string",
+                "description": "Which parts of the change marker are shown.",
+                "enum": [
+                    "HeadOnly",
+                    "CloudOnly",
+                    "HeadAndCloud"
+                ]
+            },
+            "position": {
+                "$ref": "#/Coordinate2D",
+                "description": "The point the marker refers to. Present only when the change marker has no cloud."
+            },
+            "markerId": {
+                "$ref": "#/ElementId",
+                "description": "The marker symbol of the change marker."
+            },
+            "angle": {
+                "type": "number",
+                "description": "Rotation of the marker, in radians."
+            },
+            "isHorizontalMarker": {
+                "type": "boolean",
+                "description": "Whether the marker is always kept horizontal."
+            },
+            "cloudPolygon": {
+                "type": "array",
+                "description": "The outline of the cloud, with the first point repeated at the end. Absent when the change marker has no cloud.",
+                "items": {
+                    "$ref": "#/Coordinate2D"
+                }
+            },
+            "cloudArcs": {
+                "type": "array",
+                "description": "The arcs of the cloud outline, indexed into cloudPolygon.",
+                "items": {
+                    "$ref": "#/PolyArc"
+                }
+            },
+            "cloudHoles": {
+                "type": "array",
+                "description": "Further contours of the cloud polygon, if it has any.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "polygonOutline": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/Coordinate2D"
+                            }
+                        },
+                        "polygonArcs": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/PolyArc"
+                            }
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                        "polygonOutline",
+                        "polygonArcs"
+                    ]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "linkType",
+            "markerComponent",
+            "angle",
+            "isHorizontalMarker"
+        ]
+    },
+    "PictureDetails": {
+        "type": "object",
+        "description": "A picture placed with the Figure tool. The image data itself is not returned.",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "The name of the picture."
+            },
+            "mimeType": {
+                "type": "string",
+                "description": "The MIME type of the image format, e.g. image/png."
+            },
+            "storageFormat": {
+                "type": "string",
+                "description": "The format the image is stored in.",
+                "enum": [
+                    "Default",
+                    "Bitmap",
+                    "GIF",
+                    "TIFF",
+                    "JPEG",
+                    "PNG"
+                ]
+            },
+            "box": {
+                "$ref": "#/BoundingBox2D",
+                "description": "The box of the picture as Archicad stores it, in project coordinates, before the rotation. Its size is the placed size of the picture."
+            },
+            "originalBox": {
+                "$ref": "#/BoundingBox2D",
+                "description": "The original box of the picture, before it was resized."
+            },
+            "rotationAngle": {
+                "type": "number",
+                "description": "Rotation of the picture, in radians."
+            },
+            "mirrored": {
+                "type": "boolean",
+                "description": "Mirrored to the local vertical axis."
+            },
+            "anchorPoint": {
+                "type": "string",
+                "description": "The anchor point of the picture on a 3x3 grid.",
+                "enum": [
+                    "TopLeft",
+                    "TopCenter",
+                    "TopRight",
+                    "MiddleLeft",
+                    "Center",
+                    "MiddleRight",
+                    "BottomLeft",
+                    "BottomCenter",
+                    "BottomRight"
+                ]
+            },
+            "pixelWidth": {
+                "type": "integer",
+                "description": "Width of the image in pixels."
+            },
+            "pixelHeight": {
+                "type": "integer",
+                "description": "Height of the image in pixels."
+            },
+            "transparent": {
+                "type": "boolean",
+                "description": "Whether the white pixels of the picture are drawn transparent."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "name",
+            "storageFormat",
+            "box",
+            "originalBox",
+            "rotationAngle",
+            "mirrored",
+            "anchorPoint",
+            "pixelWidth",
+            "pixelHeight",
+            "transparent"
         ]
     },
     "HatchDetails": {
@@ -10067,6 +10538,33 @@
             },
             {
                 "$ref": "#/PolylineDetails"
+            },
+            {
+                "$ref": "#/LineDetails"
+            },
+            {
+                "$ref": "#/ArcDetails"
+            },
+            {
+                "$ref": "#/SplineDetails"
+            },
+            {
+                "$ref": "#/HotspotDetails"
+            },
+            {
+                "$ref": "#/SkylightDetails"
+            },
+            {
+                "$ref": "#/CameraDetails"
+            },
+            {
+                "$ref": "#/CameraSetDetails"
+            },
+            {
+                "$ref": "#/ChangeMarkerDetails"
+            },
+            {
+                "$ref": "#/PictureDetails"
             },
             {
                 "$ref": "#/ZoneDetails"
