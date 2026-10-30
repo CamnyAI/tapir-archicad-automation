@@ -1,0 +1,93 @@
+{
+  "title": "GetTextureCoordinates and convex TriangulatePolygonsOfElements walk the parts of a curtain wall, a stair and a column like Get3DGeometryOfElements",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "curtain wall",
+      "command": "CreateCurtainWalls",
+      "params": { "curtainWallsData": [ { "coordinates": [ { "x": 700.0, "y": 700.0 }, { "x": 704.0, "y": 700.0 } ], "height": 3.0 } ] },
+      "save": { "cw": "elements[0].elementId.guid" }
+    },
+    {
+      "id": "stair",
+      "command": "CreateStairs",
+      "params": { "stairsData": [ { "baseLinePoints": [ { "x": 710.0, "y": 700.0 }, { "x": 714.0, "y": 700.0 } ], "zCoordinate": 0.0 } ] },
+      "save": { "st": "elements[0].elementId.guid" }
+    },
+    {
+      "id": "column",
+      "command": "CreateColumns",
+      "params": { "columnsData": [ { "coordinates": { "x": 720.0, "y": 700.0, "z": 0.0 } } ] },
+      "save": { "col": "elements[0].elementId.guid" }
+    },
+    {
+      "id": "texture coordinates of the three",
+      "command": "GetTextureCoordinates",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${cw}" } }, { "elementId": { "guid": "${st}" } }, { "elementId": { "guid": "${col}" } } ],
+        "includeVertices": true
+      },
+      "save": {
+        "tCwId": "textureCoordinates[0].bodies[10].polygons[0].vertexIds[1]",
+        "tCwX": "textureCoordinates[0].bodies[10].vertices[2].x",
+        "tStId": "textureCoordinates[1].bodies[5].polygons[1].vertexIds[2]",
+        "tStZ": "textureCoordinates[1].bodies[5].vertices[3].z"
+      },
+      "expect": [
+        { "path": "textureCoordinates[0].bodies[10].polygons[0].uvs[0].u", "exists": true, "name": "the curtain wall has the bodies of its frames and panels" },
+        { "path": "textureCoordinates[1].bodies[5].polygons[0].uvs[0].u", "exists": true, "name": "the stair has the bodies of its treads, risers and structure" },
+        { "path": "textureCoordinates[2].bodies", "len": 1, "name": "the column has the body of its segment" },
+        { "path": "textureCoordinates[2].bodies[0].polygons[0].uvs", "len": 4 }
+      ]
+    },
+    {
+      "id": "the same bodies as Get3DGeometryOfElements",
+      "command": "Get3DGeometryOfElements",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${cw}" } }, { "elementId": { "guid": "${st}" } }, { "elementId": { "guid": "${col}" } } ]
+      },
+      "save": {
+        "gCwId": "geometries3D[0].bodies[10].polygons[0].vertexIds[1]",
+        "gCwX": "geometries3D[0].bodies[10].vertices[2].x",
+        "gStId": "geometries3D[1].bodies[5].polygons[1].vertexIds[2]",
+        "gStZ": "geometries3D[1].bodies[5].vertices[3].z"
+      },
+      "expect": [
+        { "path": "geometries3D[2].bodies", "len": 1 },
+        { "expr": "${tCwId} - ${gCwId}", "approx": 0.0, "tol": 1e-9, "name": "curtain wall body 10: same vertex index" },
+        { "expr": "${tCwX} - ${gCwX}", "approx": 0.0, "tol": 1e-9, "name": "curtain wall body 10: same world x" },
+        { "expr": "${tStId} - ${gStId}", "approx": 0.0, "tol": 1e-9, "name": "stair body 5: same vertex index" },
+        { "expr": "${tStZ} - ${gStZ}", "approx": 0.0, "tol": 1e-9, "name": "stair body 5: same world z" }
+      ]
+    },
+    {
+      "id": "a panel of the curtain wall",
+      "command": "GetSubelementsOfHierarchicalElements",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${cw}" } } ] },
+      "save": { "panel": "subelements[0].cWallPanels[0].elementId.guid" }
+    },
+    {
+      "id": "a subelement given on its own",
+      "command": "GetTextureCoordinates",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${panel}" } } ] },
+      "expect": [
+        { "path": "textureCoordinates[0].bodies", "len": 1, "name": "the panel's own body" },
+        { "path": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].v", "exists": true }
+      ]
+    },
+    {
+      "id": "convex polygons of the curtain wall and the stair",
+      "command": "TriangulatePolygonsOfElements",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${cw}" } }, { "elementId": { "guid": "${st}" } } ], "convex": true },
+      "expect": [
+        { "path": "triangulations[0].convexPolygons[100].vertices[2]", "exists": true, "name": "the parts of the curtain wall" },
+        { "path": "triangulations[1].convexPolygons[100].vertices[2]", "exists": true, "name": "the parts of the stair" }
+      ]
+    }
+  ]
+}

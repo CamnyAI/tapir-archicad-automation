@@ -618,7 +618,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<GetTextureCoordinatesCommand> (
             elementCommands, "1.7.4",
-            "Gets the texture coordinates (u, v) of the faces of the 3D model of the given elements: per solid body, per face, at the first vertex of the face. The output is aligned with the input array of elements."
+            "Gets the texture coordinates (u, v) at every vertex of every face of the 3D model of the given elements, with the material (surface and texture) of each face. The bodies, faces and vertex indices are the same as Get3DGeometryOfElements answers, including the parts of a Stair, Railing or Curtain Wall and the segments of a Column or Beam, so the two can be joined; with includeVertices the vertices are given too. The output is aligned with the input array of elements."
         );
         err |= RegisterCommand<Get3DModelCountsCommand> (
             elementCommands, "1.7.3",
