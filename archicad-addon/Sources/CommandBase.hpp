@@ -267,6 +267,16 @@ GS::Optional<GS::UniString> BuildSlabMemoFromGeometry (
     const GS::Array<GS::ObjectState>& polygonArcs,
     const GS::Array<GS::ObjectState>& holes);
 
+// Writes a new outline/arcs/holes shape into the memo of an existing slab (read with
+// ACAPI_Element_GetMemo), for ACAPI_Element_ChangeMemo with APIMemoMask_Polygon |
+// APIMemoMask_SideMaterials | APIMemoMask_EdgeTrims. Defined in ExtendedElementCommands.cpp.
+GS::Optional<GS::UniString> ApplySlabPolygonChange (
+    API_ElementMemo& memo,
+    const API_OverriddenAttribute& sideMat,
+    GS::Array<GS::ObjectState>& polygonOutline,
+    const GS::Array<GS::ObjectState>& polygonArcs,
+    const GS::Array<GS::ObjectState>& holes);
+
 // Pushes the named favorite into the tool defaults of expectedTypeId, so a subsequent
 // ACAPI_Element_GetDefaults returns the favorite's settings as the baseline for a new
 // element. Mirrors ApplyFavoritesToElementDefaultsCommand: the element state plus the

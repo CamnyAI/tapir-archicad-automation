@@ -58,6 +58,7 @@
 #include "GraphicalOverrideCommands.hpp"
 #include "PolygonCommands.hpp"
 #include "DrawingPrimitiveCommands.hpp"
+#include "GeometryOperationCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
@@ -2526,6 +2527,43 @@ GSErrCode Initialize (void)
             "Adds load cases with their factors to the given structural analysis load combination in one undo step."
         );
         AddCommandGroup (analyticalCommands);
+    }
+
+    { // Geometry Operation Commands
+        CommandGroup geometryOperationCommands ("Geometry Operation Commands");
+        err |= RegisterCommand<SplitElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Splits walls, beams, lines, arcs, polylines and, from Archicad 29, slabs and hatches where they cross a split line, like the Split command of Archicad. The original element keeps its guid and becomes the first piece; every other piece is a new element with the original's settings, classifications, category values, property values and Element ID. The windows and doors of a wall move to the piece they are on. One undo step."
+        );
+        err |= RegisterCommand<IntersectElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Extends or trims pairs of straight walls, beams and lines to the intersection of their lines, like the Intersect command of Archicad: in each element the end nearer to the intersection moves onto it. One undo step."
+        );
+        err |= RegisterCommand<AdjustElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Extends or trims straight walls, beams and lines to a target line or to the line of a target wall, beam or line, like the Adjust command of Archicad: in each element the end nearer to the target moves onto it. One undo step."
+        );
+        err |= RegisterCommand<FilletElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Rounds the corner of pairs of straight walls or straight lines with an arc of the given radius, like Fillet in Archicad: both elements are trimmed or extended to the arc, and the arc is a new curved wall with the first wall's settings, or a new arc with the first line's settings. One undo step."
+        );
+        err |= RegisterCommand<ChamferElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Cuts the corner of pairs of straight walls or straight lines at the given distances from the corner, like Chamfer in Archicad: both elements are trimmed or extended, and the chamfer is a new wall or line with the first element's settings. One undo step."
+        );
+        err |= RegisterCommand<OffsetEdgesCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Moves straight edges of slabs, hatches, manual zones and roofs (the pivot polygon of a multi-plane roof) parallel to themselves by a distance, like Offset Edge of the pet palette; the neighbouring edges keep their directions. One undo step."
+        );
+        err |= RegisterCommand<ResizeElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Resizes elements about a point by a ratio, optionally as copies, like the Resize command of Archicad. An element that cannot be edited gets an error naming the reason. One undo step."
+        );
+        err |= RegisterCommand<MultiplyElementsCommand> (
+            geometryOperationCommands, "1.7.4",
+            "Makes a number of copies of elements, each moved by a multiple of a vector (with elevation) and/or rotated by a multiple of an angle about a point, like the Multiply command of Archicad with its Increment and Spread methods. One undo step."
+        );
+        AddCommandGroup (geometryOperationCommands);
     }
 
     { // Solid Element Operation Commands
