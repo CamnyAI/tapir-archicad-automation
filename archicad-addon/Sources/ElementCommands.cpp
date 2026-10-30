@@ -6593,7 +6593,7 @@ static GSErrCode CollectSolidBodies (const API_Elem_Head& elemHead, GS::Array<GS
 }
 
 template<typename APIElemType>
-static void CollectSubelementBodies (APIElemType* subelemArray, GS::Array<GS::ObjectState>& bodies)
+static void AddSubelementHeads (APIElemType* subelemArray, GS::Array<API_Elem_Head>& subelements)
 {
     if (subelemArray == nullptr) {
         return;
@@ -6601,22 +6601,23 @@ static void CollectSubelementBodies (APIElemType* subelemArray, GS::Array<GS::Ob
 
     const GSSize nSubelements = BMGetPtrSize (reinterpret_cast<GSPtr>(subelemArray)) / sizeof (APIElemType);
     for (GSIndex i = 0; i < nSubelements; ++i) {
-        CollectSolidBodies (subelemArray[i].head, bodies);
+        subelements.Push (subelemArray[i].head);
     }
 }
 
 // A Stair carries its 3D geometry in its subelements (see CalculateStairBounds above), and so do
-// a Railing and a Curtain Wall, so their subelements' bodies are collected too. The 3D model of a
-// Column or a Beam belongs to its segments, so theirs are collected when the element itself has
-// no body, which keeps a body from being answered twice. Returns whether the element is one of those.
-static bool CollectBodiesOfSubelements (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& bodies)
+// a Railing and a Curtain Wall, so their subelements' bodies belong to its 3D model too. The 3D
+// model of a Column or a Beam belongs to its segments, so they count when the element itself has
+// no body (hasOwnBodies), which keeps a body from being answered twice. Gives those subelements in
+// the order their bodies are answered; returns whether the element is one of those types.
+static bool GetSubelementsWithBodies (const API_Elem_Head& elemHead, bool hasOwnBodies, GS::Array<API_Elem_Head>& subelements)
 {
     const API_ElemTypeID typeID = GetElemTypeId (elemHead);
     const bool isSegmented = typeID == API_ColumnID || typeID == API_BeamID;
     if (typeID != API_StairID && typeID != API_RailingID && typeID != API_CurtainWallID && !isSegmented) {
         return false;
     }
-    if (isSegmented && !bodies.IsEmpty ()) {
+    if (isSegmented && hasOwnBodies) {
         return true;
     }
 
@@ -6626,31 +6627,47 @@ static bool CollectBodiesOfSubelements (const API_Elem_Head& elemHead, GS::Array
         return true;
     }
 
-    CollectSubelementBodies (memo.stairRisers, bodies);
-    CollectSubelementBodies (memo.stairTreads, bodies);
-    CollectSubelementBodies (memo.stairStructures, bodies);
+    AddSubelementHeads (memo.stairRisers, subelements);
+    AddSubelementHeads (memo.stairTreads, subelements);
+    AddSubelementHeads (memo.stairStructures, subelements);
 
-    CollectSubelementBodies (memo.railingPosts, bodies);
-    CollectSubelementBodies (memo.railingInnerPosts, bodies);
-    CollectSubelementBodies (memo.railingBalusters, bodies);
-    CollectSubelementBodies (memo.railingPanels, bodies);
-    CollectSubelementBodies (memo.railingRails, bodies);
-    CollectSubelementBodies (memo.railingToprails, bodies);
-    CollectSubelementBodies (memo.railingHandrails, bodies);
-    CollectSubelementBodies (memo.railingRailEnds, bodies);
-    CollectSubelementBodies (memo.railingToprailEnds, bodies);
-    CollectSubelementBodies (memo.railingHandrailEnds, bodies);
-    CollectSubelementBodies (memo.railingRailConnections, bodies);
-    CollectSubelementBodies (memo.railingToprailConnections, bodies);
-    CollectSubelementBodies (memo.railingHandrailConnections, bodies);
+    AddSubelementHeads (memo.railingPosts, subelements);
+    AddSubelementHeads (memo.railingInnerPosts, subelements);
+    AddSubelementHeads (memo.railingBalusters, subelements);
+    AddSubelementHeads (memo.railingPanels, subelements);
+    AddSubelementHeads (memo.railingRails, subelements);
+    AddSubelementHeads (memo.railingToprails, subelements);
+    AddSubelementHeads (memo.railingHandrails, subelements);
+    AddSubelementHeads (memo.railingRailEnds, subelements);
+    AddSubelementHeads (memo.railingToprailEnds, subelements);
+    AddSubelementHeads (memo.railingHandrailEnds, subelements);
+    AddSubelementHeads (memo.railingRailConnections, subelements);
+    AddSubelementHeads (memo.railingToprailConnections, subelements);
+    AddSubelementHeads (memo.railingHandrailConnections, subelements);
 
-    CollectSubelementBodies (memo.cWallFrames, bodies);
-    CollectSubelementBodies (memo.cWallPanels, bodies);
-    CollectSubelementBodies (memo.cWallJunctions, bodies);
-    CollectSubelementBodies (memo.cWallAccessories, bodies);
+    AddSubelementHeads (memo.cWallFrames, subelements);
+    AddSubelementHeads (memo.cWallPanels, subelements);
+    AddSubelementHeads (memo.cWallJunctions, subelements);
+    AddSubelementHeads (memo.cWallAccessories, subelements);
 
-    CollectSubelementBodies (memo.columnSegments, bodies);
-    CollectSubelementBodies (memo.beamSegments, bodies);
+    AddSubelementHeads (memo.columnSegments, subelements);
+    AddSubelementHeads (memo.beamSegments, subelements);
+
+    return true;
+}
+
+// Adds the bodies of the element's subelements (see GetSubelementsWithBodies) after its own.
+// Returns whether the element is a type that has them.
+static bool CollectBodiesOfSubelements (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& bodies)
+{
+    GS::Array<API_Elem_Head> subelements;
+    if (!GetSubelementsWithBodies (elemHead, !bodies.IsEmpty (), subelements)) {
+        return false;
+    }
+
+    for (const API_Elem_Head& subelement : subelements) {
+        CollectSolidBodies (subelement, bodies);
+    }
 
     return true;
 }
@@ -7646,14 +7663,71 @@ static bool HasTriangulablePolygon (API_ElemTypeID typeId)
     }
 }
 
-// The convex polygons of the faces of the element's own 3D model. The bodies are walked like
-// CollectSolidBodies does; fetching a body makes it the active body, whose polygons
-// ACAPI_ModelAccess_DecomposePgon decomposes. The handle it returns holds
-//   -n, -m1, i1 .. i(m1), -m2, j1 .. j(m2), ...
-// n being the number of convex polygons (0 for a degenerate face), mi the number of vertices of
-// the next one and i1.. its 1-based vertex indices within the body; the caller disposes it.
-static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& convexPolygons)
+// ACAPI_ModelAccess_Get3DInfo answers APIERR_BADDATABASE from any database other than the floor
+// plan and the 3D window (#1482), so from those the floor plan is made the current database for the
+// reads, as Get3DGeometryOfElements does. `switched` says whether the caller has to make
+// previousDatabase the current one again.
+static void SwitchToDatabaseWith3DModel (API_DatabaseInfo& previousDatabase, bool& switched)
 {
+    switched = false;
+    API_DatabaseInfo currentDatabase = {};
+    if (ACAPI_Database_GetCurrentDatabase (&currentDatabase) == NoError && currentDatabase.typeID != APIWind_3DModelID) {
+        SwitchCurrentDatabaseToFloorPlan (previousDatabase, switched);
+    }
+}
+
+// The contours of face iPgon of the body fetched last, walked as CollectSolidBodies walks them, so
+// that a face is skipped in the same cases and the indices are the same as Get3DGeometryOfElements
+// answers: the outer contour first, then the holes, each as 0-based vertex indices of the body.
+// Returns false for a face that CollectSolidBodies leaves out (it cannot be read, or its outer
+// contour has fewer than 3 vertices).
+static bool GetFaceContours (Int32 iPgon, API_PgonType& pgon, GS::Array<GS::Array<Int32>>& contours)
+{
+    API_Component3D component = {};
+    component.header.typeID = API_PgonID;
+    component.header.index = iPgon;
+    if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+        return false;
+    }
+    pgon = component.pgon;
+
+    contours.Clear ();
+    contours.Push (GS::Array<Int32> ());
+    for (Int32 iPedg = pgon.fpedg; iPedg <= pgon.lpedg; ++iPedg) {
+        component.header.typeID = API_PedgID;
+        component.header.index = iPedg;
+        if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+            continue;
+        }
+        const Int32 pedg = component.pedg.pedg;
+        if (pedg == 0) {
+            contours.Push (GS::Array<Int32> ());
+            continue;
+        }
+        component.header.typeID = API_EdgeID;
+        component.header.index = pedg > 0 ? pedg : -pedg;
+        if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+            continue;
+        }
+        contours.GetLast ().Push ((pedg > 0 ? component.edge.vert1 : component.edge.vert2) - 1);
+    }
+
+    return contours[0].GetSize () >= 3;
+}
+
+// The convex polygons of the faces of the element's own 3D model, added to convexPolygons; nSolidBodies
+// gets the number of its solid bodies. The bodies are walked like CollectSolidBodies does; fetching a
+// body makes it the active body, whose faces ACAPI_ModelAccess_DecomposePgon decomposes. The handle it
+// returns holds
+//   -n, -m1, i1 .. i(m1), -m2, j1 .. j(m2), ...
+// n being the number of convex polygons, mi the number of vertices of the next one and i1.. its
+// 1-based vertex indices within the body; the caller disposes it. For a face that is convex already
+// it gives no polygon (on Archicad 30, the faces of a wall, a slab or a column), so a face that is
+// neither concave nor has holes is answered as it is, by its outer contour.
+static GSErrCode CollectConvexPolygonsOfBodies (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& convexPolygons, Int32& nSolidBodies)
+{
+    nSolidBodies = 0;
+
     API_ElemInfo3D info3D = {};
     GSErrCode err = ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
     if (err != NoError) {
@@ -7670,6 +7744,7 @@ static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array
         if (component.body.nPgon == 0) { // Skip non-solid bodies
             continue;
         }
+        ++nSolidBodies;
 
         const API_BodyType body = component.body;
 
@@ -7684,7 +7759,28 @@ static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array
             vertices.Push (vertex);
         }
 
+        const auto addPolygon = [&] (const GS::Array<Int32>& oneBasedVertexIds) {
+            if (oneBasedVertexIds.GetSize () < 3) {
+                return;
+            }
+            GS::ObjectState polygonOS;
+            const auto& polygonVertices = polygonOS.AddList<GS::ObjectState> ("vertices");
+            for (Int32 vertexIndex : oneBasedVertexIds) {
+                if (vertexIndex < 1 || vertexIndex > static_cast<Int32> (vertices.GetSize ())) {
+                    return;
+                }
+                polygonVertices (Create3DCoordinateObjectState (vertices[vertexIndex - 1]));
+            }
+            convexPolygons.Push (polygonOS);
+        };
+
         for (Int32 iPgon = 1; iPgon <= body.nPgon; ++iPgon) {
+            API_PgonType pgon = {};
+            GS::Array<GS::Array<Int32>> contours;
+            if (!GetFaceContours (iPgon, pgon, contours)) {
+                continue;
+            }
+
             Int32** cpoly = nullptr;
             err = ACAPI_ModelAccess_DecomposePgon (iPgon, &cpoly);
             const GS::OnExit cpolyGuard ([&cpoly] () {
@@ -7692,41 +7788,57 @@ static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array
                     BMKillHandle (reinterpret_cast<GSHandle*> (&cpoly));
                 }
             });
-            if (err != NoError || cpoly == nullptr) {
-                continue;
-            }
 
-            const GSSize nItems = BMhGetSize (reinterpret_cast<GSHandle> (cpoly)) / sizeof (Int32);
-            if (nItems < 1) {
-                continue;
-            }
-            const Int32 nSubpolygons = -(*cpoly)[0];
-            GSSize i = 1;
-            for (Int32 iSub = 0; iSub < nSubpolygons && i < nItems; ++iSub) {
-                const Int32 nSubVertices = -(*cpoly)[i++];
-                if (nSubVertices <= 0 || i + nSubVertices > nItems) {
-                    break;
-                }
-                GS::ObjectState polygonOS;
-                const auto& polygonVertices = polygonOS.AddList<GS::ObjectState> ("vertices");
-                bool valid = true;
-                for (Int32 j = 0; j < nSubVertices; ++j) {
-                    const Int32 vertexIndex = (*cpoly)[i + j];
-                    if (vertexIndex < 1 || vertexIndex > static_cast<Int32> (vertices.GetSize ())) {
-                        valid = false;
+            UIndex nDecomposed = 0;
+            const GSSize nItems = (err == NoError && cpoly != nullptr) ? BMhGetSize (reinterpret_cast<GSHandle> (cpoly)) / sizeof (Int32) : 0;
+            if (nItems >= 1) {
+                const Int32 nSubpolygons = -(*cpoly)[0];
+                GSSize i = 1;
+                for (Int32 iSub = 0; iSub < nSubpolygons && i < nItems; ++iSub) {
+                    const Int32 nSubVertices = -(*cpoly)[i++];
+                    if (nSubVertices <= 0 || i + nSubVertices > nItems) {
                         break;
                     }
-                    polygonVertices (Create3DCoordinateObjectState (vertices[vertexIndex - 1]));
+                    GS::Array<Int32> subpolygon;
+                    for (Int32 j = 0; j < nSubVertices; ++j) {
+                        subpolygon.Push ((*cpoly)[i + j]);
+                    }
+                    i += nSubVertices;
+                    const USize nBefore = convexPolygons.GetSize ();
+                    addPolygon (subpolygon);
+                    nDecomposed += convexPolygons.GetSize () - nBefore;
                 }
-                i += nSubVertices;
-                if (valid && nSubVertices >= 3) {
-                    convexPolygons.Push (polygonOS);
+            }
+
+            if (nDecomposed == 0 && (pgon.status & APIPgon_Complex) == 0) {
+                GS::Array<Int32> outline;
+                for (Int32 vertexId : contours[0]) {
+                    outline.Push (vertexId + 1);
                 }
+                addPolygon (outline);
             }
         }
     }
 
     return NoError;
+}
+
+// The convex polygons of the faces of the element's 3D model, with those of its subelements as
+// Get3DGeometryOfElements answers them (see GetSubelementsWithBodies).
+static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& convexPolygons)
+{
+    Int32 nSolidBodies = 0;
+    GSErrCode err = CollectConvexPolygonsOfBodies (elemHead, convexPolygons, nSolidBodies);
+
+    GS::Array<API_Elem_Head> subelements;
+    if (GetSubelementsWithBodies (elemHead, nSolidBodies > 0, subelements)) {
+        err = NoError;
+        for (const API_Elem_Head& subelement : subelements) {
+            CollectConvexPolygonsOfBodies (subelement, convexPolygons, nSolidBodies);
+        }
+    }
+
+    return err;
 }
 
 TriangulatePolygonsOfElementsCommand::TriangulatePolygonsOfElementsCommand () :
@@ -7749,7 +7861,7 @@ GS::Optional<GS::UniString> TriangulatePolygonsOfElementsCommand::GetInputParame
             },
             "convex": {
                 "type": "boolean",
-                "description": "Optional. When true, the faces of the 3D model of each element (its own bodies, any element type) are decomposed into convex polygons instead, as Archicad does it, and returned as convexPolygons. Default value is false."
+                "description": "Optional. When true, the faces of the 3D model of each element (any element type, with its subelements as in Get3DGeometryOfElements) are decomposed into convex polygons instead, as Archicad does it, and returned as convexPolygons. Default value is false."
             }
         },
         "additionalProperties": false,
@@ -7805,7 +7917,7 @@ GS::Optional<GS::UniString> TriangulatePolygonsOfElementsCommand::GetRawResponse
                             "properties": {
                                 "convexPolygons": {
                                     "type": "array",
-                                    "description": "With convex: true, the convex polygons the faces of the element's 3D model are decomposed into, body by body and face by face. Empty (or an error item instead) when the element has no solid 3D model of its own (the bodies of a Stair, Railing or Curtain Wall, and of the segments of a Column or Beam, belong to their subelements, which can be given instead).",
+                                    "description": "With convex: true, the convex polygons the faces of the element's 3D model are decomposed into, body by body and face by face, with the bodies Get3DGeometryOfElements answers: including those of its subelements for a Stair, Railing or Curtain Wall, and of its segments for a Column or Beam. A face that is convex already is one polygon. Empty when the element has no solid 3D model.",
                                     "items": {
                                         "type": "object",
                                         "properties": {
@@ -7850,6 +7962,17 @@ GS::ObjectState TriangulatePolygonsOfElementsCommand::Execute (const GS::ObjectS
     parameters.Get ("elements", elements);
     bool convex = false;
     parameters.Get ("convex", convex);
+
+    API_DatabaseInfo previousDatabase = {};
+    bool databaseSwitched = false;
+    const GS::OnExit restoreDatabase ([&]() {
+        if (databaseSwitched) {
+            ACAPI_Database_ChangeCurrentDatabase (&previousDatabase);
+        }
+    });
+    if (convex) {
+        SwitchToDatabaseWith3DModel (previousDatabase, databaseSwitched);
+    }
 
     GS::ObjectState response;
     const auto& triangulations = response.AddList<GS::ObjectState> ("triangulations");
