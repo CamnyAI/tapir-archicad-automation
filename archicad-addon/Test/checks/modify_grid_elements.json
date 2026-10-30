@@ -1,0 +1,48 @@
+{
+  "title": "ModifyGridElements moves, turns and relabels a grid element in place",
+  "minTapir": "1.7.4",
+  "minArchicad": "26",
+  "steps": [
+    {"id": "grid", "command": "CreateGridElements",
+     "params": {"gridElements": [{"begCoordinate": {"x": 950, "y": 945}, "endCoordinate": {"x": 950, "y": 965}}]},
+     "save": {"grid": "elements[0].elementId.guid"}},
+    {"id": "only this grid element", "command": "GetGridElements", "creates": false, "stopOnFail": true,
+     "params": {},
+     "expect": [{"path": "gridElements", "len": 1}]},
+
+    {"id": "both points", "command": "ModifyGridElements", "creates": false,
+     "params": {"gridElementsWithDetails": [{"elementId": {"guid": "${grid}"}, "begCoordinate": {"x": 952, "y": 946}, "endCoordinate": {"x": 962, "y": 946}}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true},
+                {"path": "warnings", "len": 0}]},
+    {"id": "moved and turned", "command": "GetGridElements", "creates": false,
+     "params": {},
+     "expect": [{"path": "gridElements", "len": 1, "name": "still one grid element"},
+                {"path": "gridElements[0].pos.x", "approx": 952},
+                {"path": "gridElements[0].pos.y", "approx": 946},
+                {"path": "gridElements[0].angle", "approx": 0},
+                {"path": "gridElements[0].length", "approx": 10}]},
+
+    {"id": "end point only", "command": "ModifyGridElements", "creates": false,
+     "params": {"gridElementsWithDetails": [{"elementId": {"guid": "${grid}"}, "endCoordinate": {"x": 952, "y": 976}}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "the start point stays", "command": "GetGridElements", "creates": false,
+     "params": {},
+     "expect": [{"path": "gridElements[0].pos.x", "approx": 952},
+                {"path": "gridElements[0].pos.y", "approx": 946},
+                {"path": "gridElements[0].angle", "approx": 1.5707963, "tol": 1e-6},
+                {"path": "gridElements[0].length", "approx": 30}]},
+
+    {"id": "label and unknown parameter", "command": "ModifyGridElements", "creates": false,
+     "params": {"gridElementsWithDetails": [{"elementId": {"guid": "${grid}"}, "parameters": [{"name": "AC_MarkerText_1", "value": "Q7"}, {"name": "noSuchParameter", "value": 1}]}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true},
+                {"path": "warnings", "len": 1},
+                {"path": "warnings[0]", "contains": "noSuchParameter"}]},
+
+    {"id": "not a grid element", "command": "CreateLineElements",
+     "params": {"linesData": [{"begCoordinate": {"x": 950, "y": 940}, "endCoordinate": {"x": 955, "y": 940}}]},
+     "save": {"line": "elements[0].elementId.guid"}},
+    {"id": "refused for a line", "command": "ModifyGridElements", "creates": false,
+     "params": {"gridElementsWithDetails": [{"elementId": {"guid": "${line}"}, "begCoordinate": {"x": 0, "y": 0}}]},
+     "expect": [{"path": "executionResults[0].success", "eq": false}]}
+  ]
+}

@@ -930,6 +930,10 @@ GSErrCode Initialize (void)
             elementCommands, "1.7.2",
             "Creates grid elements, the elements the Grid Tool places, from begin and end coordinates, with optional story, layer and GDL parameters. Needs Archicad 26 or later."
         );
+        err |= RegisterCommand<ModifyGridElementsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies grid elements in place: their begin and end coordinates, story, layer and GDL parameters (for example the label), the keys CreateGridElements takes. The elements keep their GUIDs. Needs Archicad 26 or later."
+        );
         err |= RegisterCommand<CreateMeshesCommand> (
             elementCommands, "1.1.9",
             "Creates Mesh elements based on the given parameters."
