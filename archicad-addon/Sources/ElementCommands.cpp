@@ -477,6 +477,14 @@ static GSErrCode GetElementsInDrawOrderFromCurrentDatabase (const GS::ObjectStat
         }
     }
 
+    // Without DrawOrderInit the walk crashes Archicad 30 in a database that was just built, such as
+    // a section switched to for the first time (DrawOrderIterator::GoToFirstElementNotLessThan).
+    const GSErrCode initErr = ACAPI_DrawOrder_DrawOrderInit ();
+    if (initErr != NoError) {
+        return initErr;
+    }
+    const GS::OnExit drawOrderTerm ([] () { ACAPI_DrawOrder_DrawOrderTerm (); });
+
     GS::HashSet<API_Guid> visitedGuids;
     GS::HashSet<API_Guid> reportedGuids;
     API_Elem_Head elemHead = {};

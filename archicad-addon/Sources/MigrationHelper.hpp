@@ -199,6 +199,10 @@ inline GSErrCode ACAPI_Drawing_ChangeDrawingScale (double* scale, bool zoom = fa
     return ACAPI_Database (APIDb_ChangeDrawingScaleID, (void*) scale, (void*) &zoom);
 }
 
+// A drawing order walk must be started and ended (APIDb_DrawOrderInitID, APIDb_DrawOrderTermID).
+#define ACAPI_DrawOrder_DrawOrderInit() ACAPI_Database (APIDb_DrawOrderInitID)
+#define ACAPI_DrawOrder_DrawOrderTerm() ACAPI_Database (APIDb_DrawOrderTermID)
+
 inline API_AttributeIndex ACAPI_CreateAttributeIndex (Int32 index)
 {
     return index;
