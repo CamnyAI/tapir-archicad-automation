@@ -8377,8 +8377,11 @@ static GS::ObjectState ModifyOpeningThroughOpeningInterface (const API_Guid& ope
             return CreateFailedExecutionResult (resized.UnwrapErr ().kind, "Failed to read the opening back.");
         }
         const auto& extrusionParameters = resized->GetExtrusionParameters ();
-        if ((modification.width.HasValue () && std::fabs (extrusionParameters.GetWidth () - modification.width.Get ()) > OpeningPlacementTolerance) ||
-            (modification.height.HasValue () && std::fabs (extrusionParameters.GetHeight () - modification.height.Get ()) > OpeningPlacementTolerance)) {
+        // Both are empty unless the opening's polygon is Rectangular or Circular.
+        const std::optional<double> width = extrusionParameters.GetWidth ();
+        const std::optional<double> height = extrusionParameters.GetHeight ();
+        if ((modification.width.HasValue () && (!width.has_value () || std::fabs (*width - modification.width.Get ()) > OpeningPlacementTolerance)) ||
+            (modification.height.HasValue () && (!height.has_value () || std::fabs (*height - modification.height.Get ()) > OpeningPlacementTolerance))) {
             return CreateFailedExecutionResult (APIERR_GENERAL, "The opening did not take the new width or height.");
         }
     }
@@ -8394,7 +8397,11 @@ static GS::ObjectState ModifyOpeningThroughOpeningInterface (const API_Guid& ope
         // height there; Archicad 30 puts the sill on the point itself (#848).
         API_Coord3D placementPoint = modification.basePoint.Get ();
 #ifndef ServerMainVers_3000
-        placementPoint.z += current->GetExtrusionParameters ().GetHeight ();
+        const std::optional<double> currentHeight = current->GetExtrusionParameters ().GetHeight ();
+        if (!currentHeight.has_value ()) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, "The opening reports no height (its polygon is not Rectangular or Circular), so basePoint cannot be applied on Archicad 29.");
+        }
+        placementPoint.z += *currentHeight;
 #endif
         const auto anchorPoint = current->GetOpeningGeometry ().GetAnchorPoint ();
         const API_Tranmat translation = CreateTranslation (placementPoint.x - anchorPoint.x,
