@@ -58,6 +58,7 @@
 #include "GraphicalOverrideCommands.hpp"
 #include "PolygonCommands.hpp"
 #include "DrawingPrimitiveCommands.hpp"
+#include "DatabaseDrawingPrimitiveCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
@@ -655,6 +656,10 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<GetStoryControlPrimitivesCommand> (
             elementCommands, "1.7.3",
             "Returns the 2D drawing primitives of the story levels (story lines and their markers) drawn in the given section, elevation or interior elevation database, as ACAPI_DrawingPrimitive_DrawStoryControl draws them, in the same format as GetDrawingPrimitivesOfElements. The databaseId can be obtained with GetDatabaseIdFromNavigatorItemId."
+        );
+        err |= RegisterCommand<GetDrawingPrimitivesOfDatabaseCommand> (
+            elementCommands, "1.7.4",
+            "Returns the 2D drawing primitives of every element of a section, elevation, interior elevation, detail, worksheet, 3D document, layout or master layout database (its section elements with the model elements they were cut from, its 2D elements, and the drawings and annotations of a layout), in the same format as GetDrawingPrimitivesOfElements, with the database's name, reference, drawing scale and extent. The database is given by databaseId or navigatorItemId and read in the background; the front window does not change. A database whose window was not opened since the project was opened cannot be read in the background: its window is opened, read and closed again (Archicad 27 or later), the previous window comes back to the front, and windowOpened says so. A section or elevation read in the background shows the model as it was when it was last built; rebuild true rebuilds it first (Archicad 27 or later). Optional elementTypes and elements filters narrow the result."
         );
         err |= RegisterCommand<GetSectionElementsCommand> (
             elementCommands, "1.5.8",

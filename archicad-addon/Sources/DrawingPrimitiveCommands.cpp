@@ -677,3 +677,18 @@ GS::ObjectState GetStoryControlPrimitivesCommand::Execute (const GS::ObjectState
     }
     return response;
 }
+
+// ── Shared with other command files ───────────────────────────────────────────
+
+GSErrCode GetDrawingPrimitivesOfElement (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& primitives)
+{
+    DrawingPrimitiveCollectorContext ctx;
+    const GSErrCode err = GetDrawingPrimitives (elemHead, ctx);
+    primitives = ctx.primitives;
+    return err;
+}
+
+GS::UniString DrawingPrimitiveItemSchema ()
+{
+    return DrawingPrimitiveSchema;
+}
