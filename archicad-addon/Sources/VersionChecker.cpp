@@ -113,6 +113,16 @@ void VersionChecker::CreateInstance (GS::UInt16 acMainVersion)
 
 void VersionChecker::StartCheck (const std::function<void ()>& onCompleted)
 {
+#if defined (RENZO_ADDON)
+    // Renzo installs and updates this add-on itself, so Tapir's releases are not looked up. The
+    // completed empty result has no download URL: IsUsingLatestVersion is always true and
+    // IsNewerVersionWithoutAddOn always false, and the palette never offers an update.
+    (void) onCompleted;
+    if (Intance) {
+        Intance->checkStarted = true;
+        Intance->result->completed.store (true, std::memory_order_release);
+    }
+#else
     if (!Intance || Intance->checkStarted) {
         return;
     }
@@ -125,6 +135,7 @@ void VersionChecker::StartCheck (const std::function<void ()>& onCompleted)
         // Without the thread there is no lookup: the empty result counts as "no newer version", like a failed query.
         Intance->result->completed.store (true, std::memory_order_release);
     }
+#endif
 }
 
 const VersionChecker::Result* VersionChecker::GetCompletedResult ()

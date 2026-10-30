@@ -198,7 +198,9 @@ GSErrCode RegisterInterface (void)
     GSErrCode err = NoError;
 
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU_FOR_PALETTE, 0, MenuCode_UserDef, MenuFlag_Default);
+#if !defined (RENZO_ADDON)
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU_FOR_UPDATE, 0, MenuCode_UserDef, MenuFlag_Default);
+#endif
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU, 0, MenuCode_UserDef, MenuFlag_Default);
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU_FOR_SHORTCUTS, 0, MenuCode_UserDef, MenuFlag_SeparatorBefore);
     err |= ACAPI_MenuItem_RegisterMenu (ID_ADDON_MENU_RUNSCRIPT_1, 0, MenuCode_UserDef, MenuFlag_Default);
@@ -221,12 +223,22 @@ static GSErrCode ProjectEventHandler (API_NotifyEventID notifID, Int32 param)
     return AddElementNotificationClientCommand::ProjectEventHandlerProc (notifID, param);
 }
 
+// The update menu exists only in Tapir's own build (see RegisterInterface).
+static GSErrCode InstallUpdateMenuHandler ()
+{
+#if defined (RENZO_ADDON)
+    return NoError;
+#else
+    return ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU_FOR_UPDATE, MenuCommandHandler);
+#endif
+}
+
 GSErrCode Initialize (void)
 {
     GSErrCode err = NoError;
 
     err |= ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU_FOR_PALETTE, MenuCommandHandler);
-    err |= ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU_FOR_UPDATE, MenuCommandHandler);
+    err |= InstallUpdateMenuHandler ();
     err |= ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU, MenuCommandHandler);
     err |= ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU_FOR_SHORTCUTS, MenuCommandHandler);
     err |= ACAPI_MenuItem_InstallMenuHandler (ID_ADDON_MENU_RUNSCRIPT_1, MenuCommandHandler);
