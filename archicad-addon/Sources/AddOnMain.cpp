@@ -29,6 +29,7 @@
 #include "ElementGDLParameterCommands.hpp"
 #include "ElementCreationCommands.hpp"
 #include "ExtendedElementCommands.hpp"
+#include "AdditionalElementCreationCommands.hpp"
 #include "Model3DCommands.hpp"
 #include "ElementGroupingCommands.hpp"
 #include "AttributeCommands.hpp"
@@ -945,6 +946,50 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<CreateLevelDimensionsCommand> (
             elementCommands, "1.7.2",
             "Creates Level Dimension elements (the Level Dimension tool) based on the given parameters. With a parentElementId the dimension is associative: it shows the height of the parent element (Mesh, Slab, Roof ...) at its position and follows the element when it changes."
+        );
+        err |= RegisterCommand<CreateShellsCommand> (
+            elementCommands, "1.7.4",
+            "Creates Extruded Shell elements from a profile, a start point and an extrusion vector, with a Basic or Composite structure."
+        );
+        err |= RegisterCommand<CreateRadialDimensionsCommand> (
+            elementCommands, "1.7.4",
+            "Creates Radial Dimension elements that dimension the radius of Arc and Circle elements and follow them when they change."
+        );
+        err |= RegisterCommand<CreateAngleDimensionsCommand> (
+            elementCommands, "1.7.4",
+            "Creates static Angle Dimension elements that dimension the angle between two lines."
+        );
+        err |= RegisterCommand<CreateSkylightsCommand> (
+            elementCommands, "1.7.4",
+            "Creates Skylight elements in Roof or Shell elements, with the library part of the favorite, of the tool defaults or a given one."
+        );
+        err |= RegisterCommand<CreateCamerasCommand> (
+            elementCommands, "1.7.4",
+            "Creates perspective Camera elements at the end of a camera set (path): a given one, the active one or a new one."
+        );
+        err |= RegisterCommand<CreatePicturesCommand> (
+            elementCommands, "1.7.4",
+            "Creates Picture (Figure) elements from PNG, JPEG, GIF, TIFF or BMP image files, at a given position and size."
+        );
+        err |= RegisterCommand<CreateWallEndsCommand> (
+            elementCommands, "1.7.4",
+            "Creates Wall End elements (the Wall End tool) at the begin or end of walls, from the Wall End tool defaults or a favorite. Needs Archicad 26 or later."
+        );
+        err |= RegisterCommand<CreateCornerWindowsCommand> (
+            elementCommands, "1.7.4",
+            "Creates Corner Window elements (the Corner Window tool) in walls, from the Corner Window tool defaults or a favorite. Needs Archicad 26 or later."
+        );
+        err |= RegisterCommand<CreateChangeMarkersCommand> (
+            elementCommands, "1.7.4",
+            "Creates Change Marker elements (revision clouds) with their marker, linked to a new or an existing Change, or unlinked."
+        );
+        err |= RegisterCommand<CreateDetailMarkersCommand> (
+            elementCommands, "1.7.4",
+            "Creates Detail marker elements with their marker symbol: source markers that create a new Detail database from the elements inside their polygon, linked markers that refer to an existing view point, or unlinked markers."
+        );
+        err |= RegisterCommand<CreateWorksheetMarkersCommand> (
+            elementCommands, "1.7.4",
+            "Creates Worksheet marker elements with their marker symbol: source markers that create a new Worksheet database from the elements inside their polygon, linked markers that refer to an existing view point, or unlinked markers."
         );
         err |= RegisterCommand<ModifyWallsCommand> (
             elementCommands, "1.4.0",
