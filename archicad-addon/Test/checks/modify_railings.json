@@ -1,0 +1,53 @@
+{
+  "title": "ModifyRailings changes the heights, the base offset and the story of a railing in place",
+  "minTapir": "1.7.4",
+  "steps": [
+    {"id": "railing", "command": "CreateRailings",
+     "params": {"railingsData": [{"coordinates": [{"x": 970, "y": 950}, {"x": 974, "y": 950}, {"x": 974, "y": 954}], "floorIndex": 0, "bottomOffset": 0, "height": 1.1}]},
+     "save": {"railing": "elements[0].elementId.guid"}},
+
+    {"id": "height and id", "command": "ModifyRailings", "creates": false,
+     "params": {"railingsWithDetails": [{"elementId": {"guid": "${railing}"}, "height": 0.9, "id": "R-CHECK"}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "every segment has the height", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${railing}"}}]},
+     "expect": [{"path": "detailsOfElements[0].type", "eq": "Railing"},
+                {"path": "detailsOfElements[0].id", "eq": "R-CHECK"},
+                {"path": "detailsOfElements[0].details.height", "approx": 0.9},
+                {"path": "detailsOfElements[0].details.segmentHeights", "len": 2},
+                {"path": "detailsOfElements[0].details.segmentHeights[0]", "approx": 0.9},
+                {"path": "detailsOfElements[0].details.segmentHeights[1]", "approx": 0.9}]},
+
+    {"id": "one height per segment", "command": "ModifyRailings", "creates": false,
+     "params": {"railingsWithDetails": [{"elementId": {"guid": "${railing}"}, "segmentHeights": [1.2, 0.8]}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "the segment heights", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${railing}"}}]},
+     "expect": [{"path": "detailsOfElements[0].details.segmentHeights[0]", "approx": 1.2},
+                {"path": "detailsOfElements[0].details.segmentHeights[1]", "approx": 0.8},
+                {"path": "detailsOfElements[0].details.referenceLine", "len": 3, "name": "the reference line stays"}]},
+
+    {"id": "base offset", "command": "ModifyRailings", "creates": false,
+     "params": {"railingsWithDetails": [{"elementId": {"guid": "${railing}"}, "bottomOffset": 0.5}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "raised", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${railing}"}}]},
+     "save": {"z0": "detailsOfElements[0].details.zCoordinate"},
+     "expect": [{"path": "detailsOfElements[0].details.bottomOffset", "approx": 0.5},
+                {"path": "detailsOfElements[0].details.segmentHeights[0]", "approx": 1.2, "name": "the segment heights stay"}]},
+
+    {"id": "a story up", "command": "ModifyRailings", "creates": false,
+     "params": {"railingsWithDetails": [{"elementId": {"guid": "${railing}"}, "floorIndex": 1}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "on the next story", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${railing}"}}]},
+     "save": {"z1": "detailsOfElements[0].details.zCoordinate"},
+     "expect": [{"path": "detailsOfElements[0].floorIndex", "eq": 1},
+                {"path": "detailsOfElements[0].details.bottomOffset", "approx": 0.5},
+                {"expr": "${z1} - ${z0}", "gt": 0, "name": "higher than before"}]},
+
+    {"id": "wrong number of segment heights", "command": "ModifyRailings", "creates": false,
+     "params": {"railingsWithDetails": [{"elementId": {"guid": "${railing}"}, "segmentHeights": [1.0]}]},
+     "expect": [{"path": "executionResults[0].success", "eq": false}]}
+  ]
+}

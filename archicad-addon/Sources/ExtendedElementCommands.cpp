@@ -6,6 +6,7 @@
 #include "Model3D/MeshBody.hpp"
 
 #include "ExtendedElementCommands.hpp"
+#include "ElementModificationCommands.hpp"
 
 #include "MigrationHelper.hpp"
 #include "NotificationCommands.hpp"
@@ -7720,10 +7721,12 @@ GS::ObjectState GetDimensionDataCommand::Execute (const GS::ObjectState& paramet
                 if (baseGuid != APINULLGuid) {
                     witnessPoint.Add ("baseElementId", CreateGuidObjectState (baseGuid));
                 }
+                AddDimensionNoteSettings (witnessPoint, dimElem.note);
 
                 witnessPoints (witnessPoint);
             }
         }
+        dimensionData.Add ("settings", CreateDimensionSettingsObjectState (element));
 
         dimensionsData (dimensionData);
     }

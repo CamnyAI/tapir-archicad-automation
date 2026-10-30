@@ -4474,6 +4474,22 @@
             "nodeId": {
                 "type": "number",
                 "description": "Polygon vertex id of the base element, from its memo's vertexIDs, for elements with a polygon."
+            },
+            "textHeight": {
+                "type": "number",
+                "description": "Height of the text of this witness point in millimeters (paper size)."
+            },
+            "textPen": {
+                "type": "integer",
+                "description": "Pen of the text of this witness point."
+            },
+            "textFont": {
+                "type": "string",
+                "description": "Font name of the text of this witness point."
+            },
+            "textFrame": {
+                "type": "boolean",
+                "description": "Whether the text of this witness point has a frame."
             }
         }
     },
@@ -8761,12 +8777,30 @@
     },
     "SplineDetails": {
         "type": "object",
-        "description": "Geometry of a Spline element. Geometry is read-only: Archicad's own API does not support modifying Spline geometry via ACAPI_Element_Change. The settings fields (roomSeparator/linePenIndex/lineTypeId) ARE modifiable via SET.",
+        "description": "Geometry of a Spline element. SetDetailsOfElements changes only the settings fields (roomSeparator/linePenIndex/lineTypeId); ModifySplines also changes the geometry.",
         "properties": {
             "coordinates": {
                 "type": "array",
                 "items": {
                     "$ref": "#/Coordinate2D"
+                }
+            },
+            "autoSmooth": {
+                "type": "boolean",
+                "description": "Whether Archicad smooths the curve through the points. When false, bezierDirections holds the handles of the points."
+            },
+            "bezierDirections": {
+                "type": "array",
+                "description": "The handles of the points, one per point, in the format ModifySplines takes. Only when autoSmooth is false.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "lenPrev": { "type": "number", "description": "Length of the handle towards the previous point." },
+                        "lenNext": { "type": "number", "description": "Length of the handle towards the next point." },
+                        "dirAng": { "type": "number", "description": "Direction of the handles (the tangent) in radians." }
+                    },
+                    "additionalProperties": false,
+                    "required": ["lenPrev", "lenNext", "dirAng"]
                 }
             },
             "closed": {
@@ -11325,7 +11359,7 @@
     },
     "SplineSettings": {
         "type": "object",
-        "description": "Settings for modifying a Spline. Only these settings fields are modifiable - Archicad's own API does not support changing Spline geometry (coordinates/closed) via ACAPI_Element_Change.",
+        "description": "Settings for modifying a Spline. Only these settings fields are modifiable here; ModifySplines also changes the geometry (points, handles, closed).",
         "properties": {
             "roomSeparator": {
                 "type": "boolean"
@@ -12351,9 +12385,27 @@
             },
             "witnessPoints": {
                 "type": "array",
-                "description": "The witness points of the dimension. Besides the geometry each item carries the base element reference as CreateAssociativeDimensions takes it (API_Base: baseElementId, line, inIndex, special, nodeType, nodeStatus, nodeId): read a dimension placed by hand to learn the values an element type needs.",
+                "description": "The witness points of the dimension. Besides the geometry each item carries the base element reference as CreateAssociativeDimensions takes it (API_Base: baseElementId, line, inIndex, special, nodeType, nodeStatus, nodeId): read a dimension placed by hand to learn the values an element type needs. Each also has the text settings of its own text (textHeight, textPen, textFont, textFrame).",
                 "items": {
                     "$ref": "#/CoordinateWitnessPoint"
+                }
+            },
+            "settings": {
+                "type": "object",
+                "description": "The appearance and text settings of the dimension, in the format ModifyDimensions takes them. The text settings are the ones of new witness points; each witness point has its own too.",
+                "properties": {
+                    "appearance": { "type": "string" },
+                    "linePen": { "type": "integer" },
+                    "markerType": { "type": "string" },
+                    "markerPen": { "type": "integer" },
+                    "markerSize": { "type": "number" },
+                    "witnessForm": { "type": "string" },
+                    "witnessVal": { "type": "number" },
+                    "textPosition": { "type": "string" },
+                    "textHeight": { "type": "number" },
+                    "textPen": { "type": "integer" },
+                    "textFont": { "type": "string" },
+                    "textFrame": { "type": "boolean" }
                 }
             }
         }
