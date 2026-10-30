@@ -1,0 +1,159 @@
+{
+  "title": "CreateChangeMarkers: a new Change, a linked and an unlinked marker",
+  "minTapir": "1.7.4",
+  "requiresEmpty": [
+    "ChangeMarker"
+  ],
+  "steps": [
+    {
+      "id": "marker with a new change",
+      "command": "CreateChangeMarkers",
+      "params": {
+        "changeMarkersData": [
+          {
+            "position": {
+              "x": 900,
+              "y": 900
+            },
+            "polygonCoordinates": [
+              {
+                "x": 899,
+                "y": 899
+              },
+              {
+                "x": 901,
+                "y": 899
+              },
+              {
+                "x": 901,
+                "y": 901
+              },
+              {
+                "x": 899,
+                "y": 901
+              }
+            ],
+            "markerPosition": {
+              "x": 903,
+              "y": 902
+            },
+            "changeId": "TapirCheck C1",
+            "changeName": "TapirCheck change"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].elementId.guid",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "the change",
+      "command": "GetRevisionChanges",
+      "creates": false,
+      "expect": [
+        {
+          "path": "revisionChanges[0].id",
+          "eq": "TapirCheck C1"
+        },
+        {
+          "path": "revisionChanges[0].description",
+          "eq": "TapirCheck change"
+        }
+      ]
+    },
+    {
+      "id": "linked, unlinked and a missing change",
+      "command": "CreateChangeMarkers",
+      "params": {
+        "changeMarkersData": [
+          {
+            "position": {
+              "x": 910,
+              "y": 900
+            },
+            "changeId": "TapirCheck C1"
+          },
+          {
+            "position": {
+              "x": 920,
+              "y": 900
+            },
+            "linkType": "Unlinked"
+          },
+          {
+            "position": {
+              "x": 930,
+              "y": 900
+            },
+            "changeId": "TapirCheck missing",
+            "linkType": "Linked"
+          },
+          {
+            "position": {
+              "x": 940,
+              "y": 900
+            },
+            "markerComponent": "CloudOnly",
+            "linkType": "Unlinked"
+          }
+        ]
+      },
+      "save": {
+        "cm2": "elements[0].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "elements[1].elementId.guid",
+          "exists": true
+        },
+        {
+          "path": "elements[2].error.code",
+          "exists": true,
+          "name": "a Change that does not exist"
+        },
+        {
+          "path": "elements[3].error.code",
+          "exists": true,
+          "name": "a cloud without a polygon"
+        }
+      ]
+    },
+    {
+      "id": "read back",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cm2}"
+            }
+          }
+        ],
+        "fields": [
+          "type"
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "ChangeMarker"
+        }
+      ]
+    },
+    {
+      "id": "still one change",
+      "command": "GetRevisionChanges",
+      "creates": false,
+      "expect": [
+        {
+          "path": "revisionChanges",
+          "len": 1
+        }
+      ]
+    }
+  ]
+}

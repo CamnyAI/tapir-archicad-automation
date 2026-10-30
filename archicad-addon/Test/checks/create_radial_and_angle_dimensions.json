@@ -1,0 +1,242 @@
+{
+  "title": "CreateRadialDimensions and CreateAngleDimensions",
+  "minTapir": "1.7.4",
+  "requiresEmpty": [
+    "RadialDimension",
+    "AngleDimension"
+  ],
+  "steps": [
+    {
+      "id": "arc",
+      "command": "CreateArcs",
+      "params": {
+        "arcsData": [
+          {
+            "origin": {
+              "x": 900,
+              "y": 900
+            },
+            "radius": 2.5,
+            "begAngle": 0,
+            "endAngle": 2.0
+          }
+        ]
+      },
+      "save": {
+        "a1": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "radial dimension",
+      "command": "CreateRadialDimensions",
+      "params": {
+        "radialDimensionsData": [
+          {
+            "elementId": {
+              "guid": "${a1}"
+            },
+            "endCoordinate": {
+              "x": 902.1612092234726,
+              "y": 903.3658839392316
+            },
+            "prefix": "R",
+            "layerIndex": 1
+          }
+        ]
+      },
+      "save": {
+        "rd": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "radial dimension read back",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${rd}"
+            }
+          }
+        ],
+        "fields": [
+          "type",
+          "layerIndex"
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "RadialDimension"
+        },
+        {
+          "path": "detailsOfElements[0].layerIndex",
+          "eq": 1
+        }
+      ]
+    },
+    {
+      "id": "radial dimension line",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${rd}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].type",
+          "eq": "Line"
+        },
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].c2.x",
+          "approx": 902.1612092234726,
+          "tol": 0.001,
+          "name": "ends at endCoordinate (x)"
+        },
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].c2.y",
+          "approx": 903.3658839392316,
+          "tol": 0.001,
+          "name": "ends at endCoordinate (y)"
+        }
+      ]
+    },
+    {
+      "id": "end at the center",
+      "command": "CreateRadialDimensions",
+      "params": {
+        "radialDimensionsData": [
+          {
+            "elementId": {
+              "guid": "${a1}"
+            },
+            "endCoordinate": {
+              "x": 900,
+              "y": 900
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].error.code",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "angle dimension",
+      "command": "CreateAngleDimensions",
+      "params": {
+        "angleDimensionsData": [
+          {
+            "firstLine": {
+              "begCoordinate": {
+                "x": 920,
+                "y": 900
+              },
+              "endCoordinate": {
+                "x": 925,
+                "y": 900
+              }
+            },
+            "secondLine": {
+              "begCoordinate": {
+                "x": 920,
+                "y": 900
+              },
+              "endCoordinate": {
+                "x": 925,
+                "y": 905
+              }
+            },
+            "arcPoint": {
+              "x": 922.8660094673768,
+              "y": 900.886560619984
+            }
+          },
+          {
+            "firstLine": {
+              "begCoordinate": {
+                "x": 930,
+                "y": 900
+              },
+              "endCoordinate": {
+                "x": 935,
+                "y": 900
+              }
+            },
+            "secondLine": {
+              "begCoordinate": {
+                "x": 930,
+                "y": 901
+              },
+              "endCoordinate": {
+                "x": 935,
+                "y": 901
+              }
+            },
+            "arcPoint": {
+              "x": 932,
+              "y": 902
+            }
+          }
+        ]
+      },
+      "save": {
+        "ad": "elements[0].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "elements[1].error.code",
+          "exists": true,
+          "name": "parallel lines refused"
+        }
+      ]
+    },
+    {
+      "id": "angle dimension arc",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${ad}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].type",
+          "eq": "Arc"
+        },
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].orig.x",
+          "approx": 920,
+          "tol": 0.001,
+          "name": "centered on the intersection"
+        },
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].orig.y",
+          "approx": 900,
+          "tol": 0.001
+        },
+        {
+          "path": "drawingPrimitivesOfElements[0].primitives[1].r",
+          "approx": 3,
+          "tol": 0.001,
+          "name": "through arcPoint"
+        }
+      ]
+    }
+  ]
+}
