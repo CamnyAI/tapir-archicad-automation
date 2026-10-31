@@ -1,0 +1,100 @@
+{
+  "title": "GetDetailsOfElements reads back the line, arc, circle (a whole arc), spline (with its Bezier handles) and hotspot it was created with",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "line",
+      "command": "CreateLineElements",
+      "params": {"linesData": [{"begCoordinate": {"x": 700, "y": 700}, "endCoordinate": {"x": 703, "y": 701.5},
+                                "roomSeparator": true, "linePenIndex": 5}]},
+      "save": {"line": "elements[0].elementId.guid"}
+    },
+    {
+      "id": "arc",
+      "command": "CreateArcs",
+      "params": {"arcsData": [{"origin": {"x": 710, "y": 700}, "radius": 2, "begAngle": 0.25, "endAngle": 2.0, "linePenIndex": 6}]},
+      "save": {"arc": "elements[0].elementId.guid"}
+    },
+    {
+      "id": "circle",
+      "command": "CreateCircles",
+      "params": {"circlesData": [{"origin": {"x": 720, "y": 700}, "radius": 1.5}]},
+      "save": {"circle": "elements[0].elementId.guid"}
+    },
+    {
+      "id": "spline",
+      "command": "CreateSplines",
+      "params": {"splinesData": [{"coordinates": [{"x": 730, "y": 700}, {"x": 732, "y": 702}, {"x": 734, "y": 700}, {"x": 736, "y": 703}],
+                                  "closed": false, "linePenIndex": 3}]},
+      "save": {"spline": "elements[0].elementId.guid"}
+    },
+    {
+      "id": "hotspot",
+      "command": "CreateHotspots",
+      "params": {"hotspotsData": [{"position": {"x": 740, "y": 700}, "height": 1.25, "penIndex": 4}]},
+      "save": {"hotspot": "elements[0].elementId.guid"}
+    },
+    {
+      "id": "details",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {"elements": [{"elementId": {"guid": "${line}"}}, {"elementId": {"guid": "${arc}"}}, {"elementId": {"guid": "${circle}"}},
+                              {"elementId": {"guid": "${spline}"}}, {"elementId": {"guid": "${hotspot}"}}]},
+      "expect": [
+        {"path": "detailsOfElements[0].type", "eq": "Line"},
+        {"path": "detailsOfElements[0].details.begCoordinate.x", "approx": 700},
+        {"path": "detailsOfElements[0].details.endCoordinate.x", "approx": 703},
+        {"path": "detailsOfElements[0].details.endCoordinate.y", "approx": 701.5},
+        {"path": "detailsOfElements[0].details.roomSeparator", "eq": true},
+        {"path": "detailsOfElements[0].details.linePenIndex", "eq": 5},
+        {"path": "detailsOfElements[0].details.lineTypeId.guid", "exists": true},
+        {"path": "detailsOfElements[1].type", "eq": "Arc"},
+        {"path": "detailsOfElements[1].details.origin.x", "approx": 710},
+        {"path": "detailsOfElements[1].details.radius", "approx": 2},
+        {"path": "detailsOfElements[1].details.begAngle", "approx": 0.25},
+        {"path": "detailsOfElements[1].details.endAngle", "approx": 2.0},
+        {"path": "detailsOfElements[1].details.ratio", "approx": 1},
+        {"path": "detailsOfElements[1].details.linePenIndex", "eq": 6},
+        {"path": "detailsOfElements[1].details.isWhole", "eq": false},
+        {"path": "detailsOfElements[2].type", "eq": "Arc", "name": "Archicad keeps a circle as a whole arc"},
+        {"path": "detailsOfElements[2].details.origin.x", "approx": 720},
+        {"path": "detailsOfElements[2].details.radius", "approx": 1.5},
+        {"path": "detailsOfElements[2].details.ratio", "approx": 1},
+        {"path": "detailsOfElements[2].details.isWhole", "eq": true, "name": "the circle is a whole arc"},
+        {"path": "detailsOfElements[3].type", "eq": "Spline"},
+        {"path": "detailsOfElements[3].details.coordinates", "len": 4},
+        {"path": "detailsOfElements[3].details.coordinates[2].x", "approx": 734},
+        {"path": "detailsOfElements[3].details.coordinates[3].y", "approx": 703},
+        {"path": "detailsOfElements[3].details.closed", "eq": false},
+        {"path": "detailsOfElements[3].details.linePenIndex", "eq": 3},
+        {"path": "detailsOfElements[3].details.autoSmooth", "exists": true},
+        {"path": "detailsOfElements[3].details.bezierDirections", "len": 4, "name": "one Bezier handle per spline point"},
+        {"path": "detailsOfElements[3].details.bezierDirections[1].nextLength", "gt": 0},
+        {"path": "detailsOfElements[4].type", "eq": "Hotspot"},
+        {"path": "detailsOfElements[4].details.position.x", "approx": 740},
+        {"path": "detailsOfElements[4].details.height", "approx": 1.25},
+        {"path": "detailsOfElements[4].details.penIndex", "eq": 4}
+      ]
+    },
+    {
+      "id": "details with the fields filter",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {"elements": [{"elementId": {"guid": "${spline}"}}], "fields": ["type", "details"]},
+      "expect": [
+        {"path": "detailsOfElements[0].type", "eq": "Spline"},
+        {"path": "detailsOfElements[0].details.bezierDirections", "len": 4},
+        {"path": "detailsOfElements[0].id", "exists": false, "name": "id is filtered out"}
+      ]
+    },
+    {
+      "id": "header only",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {"elements": [{"elementId": {"guid": "${spline}"}}], "fields": ["type"]},
+      "expect": [
+        {"path": "detailsOfElements[0].details", "exists": false, "name": "details are not read"}
+      ]
+    }
+  ]
+}
