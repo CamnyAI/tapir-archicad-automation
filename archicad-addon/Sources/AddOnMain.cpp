@@ -1026,6 +1026,10 @@ GSErrCode Initialize (void)
             elementCommands, "1.4.0",
             "Modifies Door elements based on the given parameters."
         );
+        err |= RegisterCommand<ModifyOpeningsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Opening elements: the width, the height and the base point CreateOpenings takes. A new height keeps the bottom edge in place. From Archicad 29 the custom (polygonal) openings CreateOpenings makes are resized by scaling their polygon."
+        );
         err |= RegisterCommand<ModifyMorphsCommand> (
             elementCommands, "1.4.0",
             "Modifies Morph elements based on the given parameters."
