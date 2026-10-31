@@ -1,0 +1,344 @@
+{
+  "title": "ModifyCurtainWalls: bottom elevation, and changes it cannot make fail without changing anything",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "create a 6 m curtain wall, 3 m high, 1 m columns and rows",
+      "command": "CreateCurtainWalls",
+      "params": {
+        "curtainWallsData": [
+          {
+            "coordinates": [
+              {
+                "x": 940,
+                "y": 900
+              },
+              {
+                "x": 946,
+                "y": 900
+              }
+            ],
+            "zCoordinate": 0,
+            "floorIndex": 0,
+            "height": 3.0,
+            "primaryPattern": {
+              "logic": "FixedSizes",
+              "sizes": [
+                1.0
+              ]
+            },
+            "secondaryPattern": {
+              "logic": "FixedSizes",
+              "sizes": [
+                1.0
+              ]
+            }
+          }
+        ]
+      },
+      "save": {
+        "cw": "elements[0].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "elements[0].elementId.guid",
+          "exists": true,
+          "name": "created"
+        }
+      ]
+    },
+    {
+      "id": "box before",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "zMin0": "boundingBoxes3D[0].boundingBox3D.zMin",
+        "zMax0": "boundingBoxes3D[0].boundingBox3D.zMax",
+        "xMin0": "boundingBoxes3D[0].boundingBox3D.xMin",
+        "xMax0": "boundingBoxes3D[0].boundingBox3D.xMax"
+      }
+    },
+    {
+      "id": "bottom 0.5 m",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "zCoordinate": 0.5,
+            "floorIndex": 0
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": true,
+          "name": "succeeds"
+        }
+      ]
+    },
+    {
+      "id": "box after the bottom",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "zMin1": "boundingBoxes3D[0].boundingBox3D.zMin",
+        "zMax1": "boundingBoxes3D[0].boundingBox3D.zMax",
+        "xMin1": "boundingBoxes3D[0].boundingBox3D.xMin",
+        "xMax1": "boundingBoxes3D[0].boundingBox3D.xMax"
+      }
+    },
+    {
+      "id": "bottom read back",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "expr": "${zMin1} - ${zMin0}",
+          "approx": 0.5,
+          "tol": 0.001,
+          "name": "bottom raised by 0.5 m"
+        },
+        {
+          "expr": "${zMax1} - ${zMin1}",
+          "approx": 3.0,
+          "tol": 0.01,
+          "name": "height stays 3 m"
+        },
+        {
+          "path": "detailsOfElements[0].floorIndex",
+          "eq": 0,
+          "name": "home story stays"
+        }
+      ]
+    },
+    {
+      "id": "unknown story",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "floorIndex": 99
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": false,
+          "name": "fails"
+        },
+        {
+          "path": "executionResults[0].error.message",
+          "contains": "floorIndex 99",
+          "name": "names the story"
+        }
+      ]
+    },
+    {
+      "id": "height with an invalid cell",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "height": 4.0,
+            "cells": [
+              {
+                "columnIndex": 99,
+                "rowIndex": 0,
+                "panelClassIndex": 0
+              }
+            ]
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": false,
+          "name": "fails"
+        }
+      ]
+    },
+    {
+      "id": "no fields",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": false,
+          "name": "fails"
+        }
+      ]
+    },
+    {
+      "id": "box after the failures",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "zMin2": "boundingBoxes3D[0].boundingBox3D.zMin",
+        "zMax2": "boundingBoxes3D[0].boundingBox3D.zMax",
+        "xMin2": "boundingBoxes3D[0].boundingBox3D.xMin",
+        "xMax2": "boundingBoxes3D[0].boundingBox3D.xMax"
+      }
+    },
+    {
+      "id": "nothing changed",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "expr": "${zMin2} - ${zMin1}",
+          "approx": 0.0,
+          "tol": 0.001,
+          "name": "bottom unchanged"
+        },
+        {
+          "expr": "${zMax2} - ${zMax1}",
+          "approx": 0.0,
+          "tol": 0.001,
+          "name": "top unchanged"
+        },
+        {
+          "path": "detailsOfElements[0].floorIndex",
+          "eq": 0,
+          "name": "home story unchanged"
+        }
+      ]
+    },
+    {
+      "id": "panels unchanged",
+      "command": "GetSubelementsOfHierarchicalElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "subelements[0].cWallPanels",
+          "len": 18,
+          "name": "18 panels: the pattern is unchanged"
+        }
+      ]
+    },
+    {
+      "id": "a wall",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": {
+              "x": 940,
+              "y": 905
+            },
+            "endCoordinate": {
+              "x": 943,
+              "y": 905
+            },
+            "zCoordinate": 0,
+            "height": 2.5,
+            "thickness": 0.2
+          }
+        ]
+      },
+      "save": {
+        "wall": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "not a curtain wall",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${wall}"
+            },
+            "height": 4.0
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": false,
+          "name": "fails"
+        }
+      ]
+    }
+  ]
+}
