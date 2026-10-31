@@ -1,0 +1,164 @@
+{
+  "title": "CreateCameras: a new camera set, then a given one",
+  "minTapir": "1.7.4",
+  "requiresEmpty": [
+    "Camera",
+    "CamSet"
+  ],
+  "steps": [
+    {
+      "id": "two cameras",
+      "command": "CreateCameras",
+      "params": {
+        "camerasData": [
+          {
+            "position": {
+              "x": 900,
+              "y": 870,
+              "z": 1.7
+            },
+            "target": {
+              "x": 900,
+              "y": 900,
+              "z": 1.5
+            }
+          },
+          {
+            "position": {
+              "x": 910,
+              "y": 870,
+              "z": 1.7
+            },
+            "target": {
+              "x": 900,
+              "y": 900,
+              "z": 1.5
+            },
+            "viewCone": 1.2
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[1].elementId.guid",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "one new camera set",
+      "command": "GetElementsByType",
+      "creates": false,
+      "params": {
+        "elementType": "CamSet"
+      },
+      "save": {
+        "sets": "elements",
+        "set": "elements[0].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "elements",
+          "len": 1
+        }
+      ]
+    },
+    {
+      "id": "camera in the given set",
+      "command": "CreateCameras",
+      "params": {
+        "camerasData": [
+          {
+            "position": {
+              "x": 920,
+              "y": 870,
+              "z": 1.7
+            },
+            "target": {
+              "x": 900,
+              "y": 900,
+              "z": 1.5
+            },
+            "cameraSetId": {
+              "guid": "${set}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].elementId.guid",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "three cameras",
+      "command": "GetElementsByType",
+      "creates": false,
+      "params": {
+        "elementType": "Camera"
+      },
+      "expect": [
+        {
+          "path": "elements",
+          "len": 3
+        }
+      ]
+    },
+    {
+      "id": "not a camera set",
+      "command": "CreateCameras",
+      "params": {
+        "camerasData": [
+          {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "target": {
+              "x": 1,
+              "y": 0,
+              "z": 1
+            },
+            "cameraSetId": {
+              "guid": "00000000-0000-0000-0000-00000000BEEF"
+            }
+          },
+          {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "target": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].error.code",
+          "exists": true
+        },
+        {
+          "path": "elements[1].error.code",
+          "exists": true,
+          "name": "target at the position"
+        }
+      ]
+    }
+  ],
+  "teardown": [
+    {
+      "command": "DeleteElements",
+      "params": {
+        "elements": "${sets}"
+      }
+    }
+  ]
+}

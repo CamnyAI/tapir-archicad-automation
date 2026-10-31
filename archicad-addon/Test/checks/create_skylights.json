@@ -1,0 +1,207 @@
+{
+  "title": "CreateSkylights in a roof",
+  "minTapir": "1.7.4",
+  "requiresEmpty": [
+    "Roof",
+    "Skylight"
+  ],
+  "steps": [
+    {
+      "id": "roof",
+      "command": "CreateRoofs",
+      "params": {
+        "roofsData": [
+          {
+            "level": 3.0,
+            "thickness": 0.3,
+            "structureType": "Basic",
+            "polygonCoordinates": [
+              {
+                "x": 900,
+                "y": 900
+              },
+              {
+                "x": 910,
+                "y": 900
+              },
+              {
+                "x": 910,
+                "y": 908
+              },
+              {
+                "x": 900,
+                "y": 908
+              }
+            ],
+            "pivotLine": {
+              "begCoordinate": {
+                "x": 900,
+                "y": 900
+              },
+              "endCoordinate": {
+                "x": 910,
+                "y": 900
+              }
+            },
+            "angle": 0.5
+          }
+        ]
+      },
+      "save": {
+        "r1": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "skylight",
+      "command": "CreateSkylights",
+      "params": {
+        "skylightsData": [
+          {
+            "ownerElementId": {
+              "guid": "${r1}"
+            },
+            "anchorPosition": {
+              "x": 905,
+              "y": 904
+            },
+            "width": 0.8,
+            "height": 1.2,
+            "id": "TapirCheck SK"
+          }
+        ]
+      },
+      "save": {
+        "k1": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "skylight box",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${k1}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.xMin",
+          "approx": 904.6,
+          "tol": 0.001,
+          "name": "width 0.8 around the anchor"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.xMax",
+          "approx": 905.4,
+          "tol": 0.001
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.zMin",
+          "gt": 3.0,
+          "name": "in the roof, above its level"
+        }
+      ]
+    },
+    {
+      "id": "skylight read back",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${k1}"
+            }
+          }
+        ],
+        "fields": [
+          "type",
+          "id"
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "Skylight"
+        },
+        {
+          "path": "detailsOfElements[0].id",
+          "eq": "TapirCheck SK"
+        }
+      ]
+    },
+    {
+      "id": "skylight size",
+      "command": "GetGDLParametersOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${k1}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "gdlParametersOfElements[0].parameters[0].name",
+          "eq": "A"
+        },
+        {
+          "path": "gdlParametersOfElements[0].parameters[0].value",
+          "approx": 0.8,
+          "tol": 0.0001
+        },
+        {
+          "path": "gdlParametersOfElements[0].parameters[1].value",
+          "approx": 1.2,
+          "tol": 0.0001
+        }
+      ]
+    },
+    {
+      "id": "invalid owner and library part",
+      "command": "CreateSkylights",
+      "params": {
+        "skylightsData": [
+          {
+            "ownerElementId": {
+              "guid": "${k1}"
+            },
+            "anchorPosition": {
+              "x": 905,
+              "y": 904
+            }
+          },
+          {
+            "ownerElementId": {
+              "guid": "${r1}"
+            },
+            "anchorPosition": {
+              "x": 902,
+              "y": 902
+            },
+            "libraryPartName": "TapirCheck no such skylight"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].error.code",
+          "exists": true,
+          "name": "a skylight is not a roof or shell"
+        },
+        {
+          "path": "elements[1].error.code",
+          "exists": true,
+          "name": "unknown library part"
+        }
+      ]
+    }
+  ]
+}

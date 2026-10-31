@@ -1,0 +1,486 @@
+{
+  "title": "CreateShells: Extruded shells, Basic and Composite, open and closed profiles",
+  "minTapir": "1.7.4",
+  "requiresEmpty": [
+    "Shell"
+  ],
+  "steps": [
+    {
+      "id": "extruded basic",
+      "command": "CreateShells",
+      "params": {
+        "shellsData": [
+          {
+            "shellClass": "Extruded",
+            "profile": {
+              "coordinates": [
+                {
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "x": -2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2,
+                  "y": 0
+                }
+              ],
+              "arcs": [
+                {
+                  "begIndex": 1,
+                  "endIndex": 2,
+                  "arcAngle": -1.0
+                }
+              ]
+            },
+            "begCoordinate": {
+              "x": 900,
+              "y": 900,
+              "z": 0
+            },
+            "extrusionVector": {
+              "x": 10,
+              "y": 0,
+              "z": 0
+            },
+            "structureType": "Basic",
+            "thickness": 0.3,
+            "id": "TapirCheck shell"
+          }
+        ]
+      },
+      "save": {
+        "s1": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "extruded box",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${s1}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.xMin",
+          "approx": 900,
+          "tol": 0.01,
+          "name": "starts at begCoordinate"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.xMax",
+          "approx": 910,
+          "tol": 0.01,
+          "name": "ends at begCoordinate + extrusionVector"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.yMin",
+          "approx": 897.153,
+          "tol": 0.01,
+          "name": "profile width with thickness"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.zMax",
+          "approx": 2.939,
+          "tol": 0.01,
+          "name": "profile height with the arc"
+        }
+      ]
+    },
+    {
+      "id": "extruded basic structure",
+      "command": "GetQuantitiesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${s1}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "quantitiesOfElements[0].quantities.floorPlanArea",
+          "approx": 50,
+          "tol": 0.01,
+          "name": "plan area 10 x 5"
+        },
+        {
+          "path": "quantitiesOfElements[0].composites",
+          "len": 1,
+          "name": "one building material (Basic)"
+        }
+      ]
+    },
+    {
+      "id": "extruded id",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${s1}"
+            }
+          }
+        ],
+        "fields": [
+          "type",
+          "id"
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "Shell"
+        },
+        {
+          "path": "detailsOfElements[0].id",
+          "eq": "TapirCheck shell"
+        }
+      ]
+    },
+    {
+      "id": "composite, closed profile, other story",
+      "command": "CreateShells",
+      "params": {
+        "shellsData": [
+          {
+            "profile": {
+              "coordinates": [
+                {
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "x": -2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2,
+                  "y": 0
+                }
+              ],
+              "arcs": [
+                {
+                  "begIndex": 1,
+                  "endIndex": 2,
+                  "arcAngle": -1.0
+                }
+              ]
+            },
+            "begCoordinate": {
+              "x": 900,
+              "y": 950,
+              "z": 0
+            },
+            "extrusionVector": {
+              "x": 10,
+              "y": 0,
+              "z": 0
+            },
+            "structureType": "Composite"
+          },
+          {
+            "shellClass": "Extruded",
+            "profile": {
+              "coordinates": [
+                {
+                  "x": -1,
+                  "y": 0
+                },
+                {
+                  "x": 1,
+                  "y": 0
+                },
+                {
+                  "x": 1,
+                  "y": 1
+                },
+                {
+                  "x": -1,
+                  "y": 1
+                }
+              ],
+              "closed": true
+            },
+            "begCoordinate": {
+              "x": 900,
+              "y": 970,
+              "z": 0
+            },
+            "extrusionVector": {
+              "x": 0,
+              "y": 5,
+              "z": 0
+            },
+            "structureType": "Basic",
+            "thickness": 0.1,
+            "floorIndex": 1
+          }
+        ]
+      },
+      "save": {
+        "s3": "elements[0].elementId.guid",
+        "s5": "elements[1].elementId.guid"
+      }
+    },
+    {
+      "id": "composite structure",
+      "command": "GetQuantitiesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${s3}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "quantitiesOfElements[0].composites[1].volume",
+          "gt": 0,
+          "name": "two or more skins (Composite)"
+        }
+      ]
+    },
+    {
+      "id": "closed profile on story 1",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${s5}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.yMin",
+          "approx": 970,
+          "tol": 0.01,
+          "name": "extruded along y"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.yMax",
+          "approx": 975,
+          "tol": 0.01
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.zMin",
+          "lt": 0.01,
+          "name": "z from the project zero, not from story 1"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.zMax",
+          "gt": 0.99,
+          "name": "the tube's top"
+        }
+      ]
+    },
+    {
+      "id": "closed profile story",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${s5}"
+            }
+          }
+        ],
+        "fields": [
+          "floorIndex"
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].floorIndex",
+          "eq": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid items",
+      "command": "CreateShells",
+      "params": {
+        "shellsData": [
+          {
+            "profile": {
+              "coordinates": [
+                {
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "x": 1,
+                  "y": 1
+                }
+              ]
+            },
+            "begCoordinate": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "extrusionVector": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            }
+          },
+          {
+            "shellClass": "Extruded",
+            "profile": {
+              "coordinates": [
+                {
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "x": -2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2,
+                  "y": 0
+                }
+              ],
+              "arcs": [
+                {
+                  "begIndex": 1,
+                  "endIndex": 2,
+                  "arcAngle": -1.0
+                }
+              ]
+            },
+            "begCoordinate": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "extrusionVector": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].error.code",
+          "exists": true,
+          "name": "a profile with two identical points"
+        },
+        {
+          "path": "elements[1].error.code",
+          "exists": true,
+          "name": "zero extrusion vector"
+        }
+      ]
+    },
+    {
+      "id": "Revolved is not offered",
+      "command": "CreateShells",
+      "creates": false,
+      "allowEnvelopeError": true,
+      "params": {
+        "shellsData": [
+          {
+            "shellClass": "Revolved",
+            "profile": {
+              "coordinates": [
+                {
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "x": -2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2.5,
+                  "y": 2
+                },
+                {
+                  "x": 2,
+                  "y": 0
+                }
+              ],
+              "arcs": [
+                {
+                  "begIndex": 1,
+                  "endIndex": 2,
+                  "arcAngle": -1.0
+                }
+              ]
+            },
+            "begCoordinate": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "extrusionVector": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements",
+          "exists": false
+        }
+      ]
+    },
+    {
+      "id": "all listed",
+      "command": "GetElementsByType",
+      "creates": false,
+      "params": {
+        "elementType": "Shell"
+      },
+      "expect": [
+        {
+          "path": "elements",
+          "len": 3
+        }
+      ]
+    }
+  ]
+}

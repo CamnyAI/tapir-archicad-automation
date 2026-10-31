@@ -1,0 +1,183 @@
+{
+  "title": "CreateWallEnds and CreateCornerWindows",
+  "minTapir": "1.7.4",
+  "minArchicad": "26",
+  "requiresEmpty": [
+    "Wall",
+    "Window"
+  ],
+  "steps": [
+    {
+      "id": "walls",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": {
+              "x": 900,
+              "y": 900
+            },
+            "endCoordinate": {
+              "x": 906,
+              "y": 900
+            },
+            "zCoordinate": 0,
+            "height": 3,
+            "thickness": 0.3
+          },
+          {
+            "begCoordinate": {
+              "x": 906,
+              "y": 900
+            },
+            "endCoordinate": {
+              "x": 906,
+              "y": 906
+            },
+            "zCoordinate": 0,
+            "height": 3,
+            "thickness": 0.3
+          },
+          {
+            "begCoordinate": {
+              "x": 920,
+              "y": 900
+            },
+            "endCoordinate": {
+              "x": 926,
+              "y": 900
+            },
+            "zCoordinate": 0,
+            "height": 3,
+            "thickness": 0.3
+          }
+        ]
+      },
+      "save": {
+        "w1": "elements[0].elementId.guid",
+        "w3": "elements[2].elementId.guid"
+      }
+    },
+    {
+      "id": "wall ends",
+      "command": "CreateWallEnds",
+      "params": {
+        "wallEndsData": [
+          {
+            "ownerWallId": {
+              "guid": "${w3}"
+            },
+            "atWallEnd": "Begin"
+          },
+          {
+            "ownerWallId": {
+              "guid": "${w3}"
+            },
+            "atWallEnd": "End"
+          }
+        ]
+      },
+      "save": {
+        "e1": "elements[0].elementId.guid",
+        "e2": "elements[1].elementId.guid"
+      }
+    },
+    {
+      "id": "wall end places",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${e1}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${e2}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.xMin",
+          "approx": 920,
+          "tol": 0.05,
+          "name": "at the begin of the wall"
+        },
+        {
+          "path": "boundingBoxes3D[1].boundingBox3D.xMax",
+          "approx": 926,
+          "tol": 0.05,
+          "name": "at the end of the wall"
+        }
+      ]
+    },
+    {
+      "id": "corner window",
+      "command": "CreateCornerWindows",
+      "params": {
+        "cornerWindowsData": [
+          {
+            "ownerWallId": {
+              "guid": "${w1}"
+            },
+            "centerOffset": 5.0,
+            "sillHeight": 0.9
+          }
+        ]
+      },
+      "save": {
+        "c1": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "corner window place",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${c1}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.zMin",
+          "approx": 0.9,
+          "tol": 0.001,
+          "name": "sill height"
+        },
+        {
+          "path": "boundingBoxes3D[0].boundingBox3D.xMax",
+          "gt": 905.9,
+          "name": "reaches the corner"
+        }
+      ]
+    },
+    {
+      "id": "not a wall",
+      "command": "CreateWallEnds",
+      "params": {
+        "wallEndsData": [
+          {
+            "ownerWallId": {
+              "guid": "${c1}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].error.code",
+          "exists": true
+        }
+      ]
+    }
+  ]
+}

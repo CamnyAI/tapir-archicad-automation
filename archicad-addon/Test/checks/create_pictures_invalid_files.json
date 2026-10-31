@@ -1,0 +1,59 @@
+{
+  "title": "CreatePictures refuses missing files and unknown image formats",
+  "minTapir": "1.7.4",
+  "requiresEmpty": [
+    "Picture"
+  ],
+  "steps": [
+    {
+      "id": "missing and unsupported files",
+      "command": "CreatePictures",
+      "params": {
+        "picturesData": [
+          {
+            "filePath": "/TapirCheck/no/such/picture.png",
+            "position": {
+              "x": 900,
+              "y": 900
+            },
+            "width": 1,
+            "height": 1
+          },
+          {
+            "filePath": "/TapirCheck/picture.svg",
+            "position": {
+              "x": 900,
+              "y": 900
+            },
+            "width": 1,
+            "height": 1
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "elements[0].error.code",
+          "exists": true
+        },
+        {
+          "path": "elements[1].error.code",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "nothing created",
+      "command": "GetElementsByType",
+      "creates": false,
+      "params": {
+        "elementType": "Picture"
+      },
+      "expect": [
+        {
+          "path": "elements",
+          "len": 0
+        }
+      ]
+    }
+  ]
+}
