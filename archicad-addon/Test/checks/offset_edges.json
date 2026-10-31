@@ -1,0 +1,376 @@
+{
+  "title": "OffsetEdges moves an edge of a slab, a hatch, a manual zone or a roof parallel to itself",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "slab with a hole",
+      "command": "CreateSlabs",
+      "params": {
+        "slabsData": [
+          {
+            "level": 0,
+            "polygonCoordinates": [
+              {
+                "x": 700,
+                "y": 700
+              },
+              {
+                "x": 710,
+                "y": 700
+              },
+              {
+                "x": 710,
+                "y": 705
+              },
+              {
+                "x": 700,
+                "y": 705
+              }
+            ],
+            "holes": [
+              {
+                "polygonCoordinates": [
+                  {
+                    "x": 702,
+                    "y": 701
+                  },
+                  {
+                    "x": 704,
+                    "y": 701
+                  },
+                  {
+                    "x": 704,
+                    "y": 703
+                  },
+                  {
+                    "x": 702,
+                    "y": 703
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "save": {
+        "slab": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "hatch",
+      "command": "CreateHatches",
+      "params": {
+        "hatchesData": [
+          {
+            "coordinates": [
+              {
+                "x": 720,
+                "y": 700
+              },
+              {
+                "x": 730,
+                "y": 700
+              },
+              {
+                "x": 730,
+                "y": 705
+              },
+              {
+                "x": 720,
+                "y": 705
+              }
+            ]
+          }
+        ]
+      },
+      "save": {
+        "hatch": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "manual zone",
+      "command": "CreateZones",
+      "params": {
+        "zonesData": [
+          {
+            "name": "TapirCheck offset",
+            "numberStr": "99",
+            "geometry": {
+              "polygonCoordinates": [
+                {
+                  "x": 740,
+                  "y": 700
+                },
+                {
+                  "x": 750,
+                  "y": 700
+                },
+                {
+                  "x": 750,
+                  "y": 705
+                },
+                {
+                  "x": 740,
+                  "y": 705
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "save": {
+        "zone": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "multi-plane roof",
+      "command": "CreateRoofs",
+      "params": {
+        "roofsData": [
+          {
+            "level": 3,
+            "polygonCoordinates": [
+              {
+                "x": 760,
+                "y": 700
+              },
+              {
+                "x": 770,
+                "y": 700
+              },
+              {
+                "x": 770,
+                "y": 705
+              },
+              {
+                "x": 760,
+                "y": 705
+              }
+            ]
+          }
+        ]
+      },
+      "save": {
+        "roof": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "a line",
+      "command": "CreateLineElements",
+      "params": {
+        "linesData": [
+          {
+            "begCoordinate": {
+              "x": 700,
+              "y": 720
+            },
+            "endCoordinate": {
+              "x": 710,
+              "y": 720
+            }
+          }
+        ]
+      },
+      "save": {
+        "line": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "offset edges",
+      "command": "OffsetEdges",
+      "creates": false,
+      "params": {
+        "edgesToOffset": [
+          {
+            "elementId": {
+              "guid": "${slab}"
+            },
+            "edgeIndex": 1,
+            "offset": 2
+          },
+          {
+            "elementId": {
+              "guid": "${slab}"
+            },
+            "contourIndex": 1,
+            "edgeIndex": 0,
+            "offset": 0.5
+          },
+          {
+            "elementId": {
+              "guid": "${hatch}"
+            },
+            "edgeIndex": 0,
+            "offset": -1
+          },
+          {
+            "elementId": {
+              "guid": "${zone}"
+            },
+            "edgeIndex": 2,
+            "offset": 1
+          },
+          {
+            "elementId": {
+              "guid": "${roof}"
+            },
+            "edgeIndex": 3,
+            "offset": 1
+          },
+          {
+            "elementId": {
+              "guid": "${slab}"
+            },
+            "edgeIndex": 9,
+            "offset": 1
+          },
+          {
+            "elementId": {
+              "guid": "${line}"
+            },
+            "edgeIndex": 0,
+            "offset": 1
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": true
+        },
+        {
+          "path": "executionResults[1].success",
+          "eq": true
+        },
+        {
+          "path": "executionResults[2].success",
+          "eq": true
+        },
+        {
+          "path": "executionResults[3].success",
+          "eq": true
+        },
+        {
+          "path": "executionResults[4].success",
+          "eq": true
+        },
+        {
+          "path": "executionResults[5].success",
+          "eq": false,
+          "name": "an edge the outline does not have"
+        },
+        {
+          "path": "executionResults[6].success",
+          "eq": false,
+          "name": "a line has no polygon"
+        }
+      ]
+    },
+    {
+      "id": "changed outlines",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${slab}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${hatch}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${zone}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${roof}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].details.polygonOutline[1].x",
+          "approx": 712,
+          "tol": 1e-06,
+          "name": "slab edge 1 moved out by 2"
+        },
+        {
+          "path": "detailsOfElements[0].details.polygonOutline[2].x",
+          "approx": 712,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[0].details.polygonOutline[2].y",
+          "approx": 705,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[0].details.polygonOutline[0].x",
+          "approx": 700,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[0].details.holes[0].polygonOutline[0].y",
+          "approx": 701.5,
+          "tol": 1e-06,
+          "name": "hole edge 0 moved into the hole"
+        },
+        {
+          "path": "detailsOfElements[0].details.holes[0].polygonOutline[1].y",
+          "approx": 701.5,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[1].details.coordinates[0].y",
+          "approx": 701,
+          "tol": 1e-06,
+          "name": "hatch edge 0 moved in by 1"
+        },
+        {
+          "path": "detailsOfElements[1].details.coordinates[1].y",
+          "approx": 701,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[1].details.coordinates[2].y",
+          "approx": 705,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[2].details.polygonOutline[2].y",
+          "approx": 706,
+          "tol": 1e-06,
+          "name": "zone edge 2 moved out by 1"
+        },
+        {
+          "path": "detailsOfElements[2].details.polygonOutline[3].y",
+          "approx": 706,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[3].details.pivotPolygonOutline[3].x",
+          "approx": 759,
+          "tol": 1e-06,
+          "name": "roof pivot edge 3 moved out by 1"
+        },
+        {
+          "path": "detailsOfElements[3].details.pivotPolygonOutline[0].x",
+          "approx": 759,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[3].details.pivotPolygonOutline[1].x",
+          "approx": 770,
+          "tol": 1e-06
+        }
+      ]
+    }
+  ]
+}

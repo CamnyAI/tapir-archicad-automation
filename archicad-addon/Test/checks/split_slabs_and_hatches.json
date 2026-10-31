@@ -1,0 +1,354 @@
+{
+  "title": "SplitElements splits slabs and hatches, also through a hole; the pieces keep the slab's settings",
+  "minTapir": "1.7.4",
+  "minArchicad": "29",
+  "steps": [
+    {
+      "id": "slab with a hole on the split line",
+      "command": "CreateSlabs",
+      "params": {
+        "slabsData": [
+          {
+            "level": 0,
+            "thickness": 0.25,
+            "polygonCoordinates": [
+              {
+                "x": 700,
+                "y": 700
+              },
+              {
+                "x": 710,
+                "y": 700
+              },
+              {
+                "x": 710,
+                "y": 704
+              },
+              {
+                "x": 700,
+                "y": 704
+              }
+            ],
+            "holes": [
+              {
+                "polygonCoordinates": [
+                  {
+                    "x": 704,
+                    "y": 701
+                  },
+                  {
+                    "x": 706,
+                    "y": 701
+                  },
+                  {
+                    "x": 706,
+                    "y": 703
+                  },
+                  {
+                    "x": 704,
+                    "y": 703
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "save": {
+        "slab": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "hatch",
+      "command": "CreateHatches",
+      "params": {
+        "hatchesData": [
+          {
+            "coordinates": [
+              {
+                "x": 720,
+                "y": 700
+              },
+              {
+                "x": 730,
+                "y": 700
+              },
+              {
+                "x": 730,
+                "y": 704
+              },
+              {
+                "x": 720,
+                "y": 704
+              }
+            ]
+          }
+        ]
+      },
+      "save": {
+        "hatch": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "slab before",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${slab}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "t0": "detailsOfElements[0].details.thickness",
+        "lv0": "detailsOfElements[0].details.level"
+      }
+    },
+    {
+      "id": "split along x = 705 and x = 725",
+      "command": "SplitElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${slab}"
+            }
+          }
+        ],
+        "splitLine": {
+          "begCoordinate": {
+            "x": 705,
+            "y": 0
+          },
+          "endCoordinate": {
+            "x": 705,
+            "y": 1000
+          }
+        }
+      },
+      "save": {
+        "slabB": "piecesOfElements[0].elements[1].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "piecesOfElements[0].elements",
+          "len": 2,
+          "name": "slab: two pieces"
+        }
+      ]
+    },
+    {
+      "id": "split the hatch",
+      "command": "SplitElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${hatch}"
+            }
+          }
+        ],
+        "splitLine": {
+          "begCoordinate": {
+            "x": 725,
+            "y": 0
+          },
+          "endCoordinate": {
+            "x": 725,
+            "y": 1000
+          }
+        }
+      },
+      "save": {
+        "hatchB": "piecesOfElements[0].elements[1].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "piecesOfElements[0].elements",
+          "len": 2,
+          "name": "hatch: two pieces"
+        }
+      ]
+    },
+    {
+      "id": "piece extents",
+      "command": "API.Get2DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${slab}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${slabB}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "boundingBoxes2D[0].boundingBox2D.xMin",
+          "approx": 705,
+          "tol": 0.0001,
+          "name": "the original is the piece right of the line"
+        },
+        {
+          "path": "boundingBoxes2D[0].boundingBox2D.xMax",
+          "approx": 710,
+          "tol": 0.0001
+        },
+        {
+          "path": "boundingBoxes2D[1].boundingBox2D.xMin",
+          "approx": 700,
+          "tol": 0.0001
+        },
+        {
+          "path": "boundingBoxes2D[1].boundingBox2D.xMax",
+          "approx": 705,
+          "tol": 0.0001,
+          "name": "the new piece is left of it"
+        }
+      ]
+    },
+    {
+      "id": "hatch pieces",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${hatch}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${hatchB}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].details.coordinates",
+          "len": 5,
+          "name": "a rectangle (with the closing vertex)"
+        },
+        {
+          "path": "detailsOfElements[1].details.coordinates",
+          "len": 5
+        },
+        {
+          "path": "detailsOfElements[0].details.coordinates[0].x",
+          "approx": 725,
+          "tol": 1e-06,
+          "name": "the original is the piece right of the line"
+        },
+        {
+          "path": "detailsOfElements[0].details.coordinates[1].x",
+          "approx": 730,
+          "tol": 1e-06
+        },
+        {
+          "path": "detailsOfElements[1].details.coordinates[0].x",
+          "approx": 720,
+          "tol": 1e-06,
+          "name": "the new piece is left of it"
+        },
+        {
+          "path": "detailsOfElements[1].details.coordinates[1].x",
+          "approx": 725,
+          "tol": 1e-06
+        }
+      ]
+    },
+    {
+      "id": "slab pieces",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${slab}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${slabB}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "t1": "detailsOfElements[1].details.thickness",
+        "lv1": "detailsOfElements[1].details.level"
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].details.polygonOutline",
+          "len": 9,
+          "name": "the cut hole is part of the outline: 8 vertices and the closing one"
+        },
+        {
+          "path": "detailsOfElements[1].details.polygonOutline",
+          "len": 9
+        },
+        {
+          "path": "detailsOfElements[0].details.holes",
+          "len": 0
+        },
+        {
+          "path": "detailsOfElements[1].details.holes",
+          "len": 0
+        },
+        {
+          "expr": "${t1} - ${t0}",
+          "approx": 0,
+          "tol": 1e-09,
+          "name": "same thickness"
+        },
+        {
+          "expr": "${lv1} - ${lv0}",
+          "approx": 0,
+          "tol": 1e-09,
+          "name": "same level"
+        }
+      ]
+    }
+  ],
+  "teardown": [
+    {
+      "command": "DeleteElements",
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${slabB}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "DeleteElements",
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${hatchB}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

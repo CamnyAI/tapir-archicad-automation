@@ -1346,7 +1346,7 @@ static GSErrCode TAPIR_Polygon_DeleteSubPoly (API_ElementMemo* memo, Int32* subP
 // ACAPI_Element_ChangeMemo and vertexIDs left untouched/zero for new vertices (see
 // API_ElementMemo's own documented convention - existing IDs must never be renumbered, new ones
 // get ID 0 for Archicad to assign), work correctly for every case tested (issue #452).
-static GS::Optional<GS::UniString> ApplySlabPolygonChange (
+GS::Optional<GS::UniString> ApplySlabPolygonChange (
     API_ElementMemo& memo,
     const API_OverriddenAttribute& sideMat,
     GS::Array<GS::ObjectState>& polygonOutline,
