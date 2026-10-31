@@ -1,0 +1,247 @@
+name: Renzo Add-On Release
+
+# Builds the add-on for every Archicad version in archicad-addon/devkits.json on a pushed tag
+# such as 1.7.4-renzo.1, signs and notarizes the macOS bundles, and publishes them as a GitHub
+# release that Renzo's desktop app downloads. Archicad 30 for macOS must build; every other
+# version is released when it builds and left out when it does not.
+#
+# Signing uses the same five secrets as renzo-desktop's release workflow: CSC_LINK (the
+# Developer ID Application .p12, base64), CSC_KEY_PASSWORD, APPLE_API_KEY (the App Store Connect
+# .p8 text), APPLE_API_KEY_ID and APPLE_API_ISSUER. Without them the add-ons are built unsigned,
+# kept as workflow artifacts, and nothing is published.
+
+on:
+  push:
+    tags:
+      - '*-renzo.*'
+
+permissions:
+  contents: write
+
+env:
+  SIGNING_IDENTITY: "Developer ID Application: Brain 1 GmbH (NNSWZ7S4ZJ)"
+  # Archicad stops registering the commands that refer to the common schema definitions once
+  # the compiled (minified) file passes about 640 KB; fail well before that.
+  SCHEMA_SIZE_LIMIT: 600000
+
+jobs:
+  devkits:
+    runs-on: ubuntu-latest
+    outputs:
+      win: ${{ steps.list.outputs.win }}
+      mac: ${{ steps.list.outputs.mac }}
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+    - name: Check the tag against the add-on version
+      run: |
+        version=$(sed -n 's/^#define ADDON_VERSION "\(.*\)"$/\1/p' archicad-addon/Sources/AddOnVersion.hpp)
+        if [ "$version" != "$GITHUB_REF_NAME" ]; then
+          echo "::error::The tag is $GITHUB_REF_NAME but AddOnVersion.hpp says $version."
+          exit 1
+        fi
+    - name: Read the DevKit list
+      id: list
+      run: |
+        echo "win=$(python3 tools/devkits.py matrix WIN)" >> "$GITHUB_OUTPUT"
+        echo "mac=$(python3 tools/devkits.py matrix MAC)" >> "$GITHUB_OUTPUT"
+
+  build_mac:
+    needs: devkits
+    strategy:
+      fail-fast: false
+      matrix:
+        params: ${{ fromJSON(needs.devkits.outputs.mac) }}
+    runs-on: ${{ matrix.params.acVersion < 26 && 'macos-15-intel' || 'macos-latest' }}
+    continue-on-error: ${{ matrix.params.acVersion != 30 }}
+    env:
+      ADDON: RenzoArchicad_AC${{ matrix.params.acVersion }}_Mac
+      OUT: archicad-addon/Build/RelWithDebInfo
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+    - name: Download Development Kit
+      run: python3 archicad-addon/Tools/download_and_unzip.py ${{ matrix.params.devKitUrl }} archicad-addon/Build/DevKits/AC${{ matrix.params.acVersion }}
+    - name: Generate Project
+      run: cmake -B archicad-addon/Build -G "Xcode" -DAC_VERSION=${{ matrix.params.acVersion }} -DAC_API_DEVKIT_DIR="archicad-addon/Build/DevKits/AC${{ matrix.params.acVersion }}/Support" archicad-addon
+    - name: Build RelWithDebInfo
+      run: cmake --build archicad-addon/Build --config RelWithDebInfo
+    - name: Check the size of the common schema definitions
+      run: |
+        file=archicad-addon/Build/ResourceObjects/Images/CommonSchemaDefinitions.json
+        test -f "$file" || { echo "::error::$file was not compiled."; exit 1; }
+        size=$(wc -c < "$file" | tr -d ' ')
+        echo "$file: $size bytes (limit $SCHEMA_SIZE_LIMIT)"
+        if [ "$size" -gt "$SCHEMA_SIZE_LIMIT" ]; then
+          echo "::error::The compiled CommonSchemaDefinitions.json is $size bytes, over $SCHEMA_SIZE_LIMIT. Archicad would not register the commands that refer to it."
+          exit 1
+        fi
+    - name: Check the signing secrets
+      id: secrets
+      env:
+        CSC_LINK: ${{ secrets.CSC_LINK }}
+        CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      run: |
+        if [ -n "$CSC_LINK" ] && [ -n "$CSC_KEY_PASSWORD" ] && [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::The Apple signing secrets are not set. The add-on stays unsigned and is not released."
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+    # The same keychain import as renzo-desktop's release workflow.
+    - name: Import the signing identity
+      if: steps.secrets.outputs.present == 'true'
+      env:
+        CSC_LINK: ${{ secrets.CSC_LINK }}
+        CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      run: |
+        set -euo pipefail
+        umask 077
+        cert_path="$RUNNER_TEMP/certificate.p12"
+        keychain_path="$RUNNER_TEMP/build.keychain"
+        keychain_password="$(uuidgen)"
+        printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
+        security create-keychain -p "$keychain_password" "$keychain_path"
+        security set-keychain-settings -lut 3600 "$keychain_path"
+        security unlock-keychain -p "$keychain_password" "$keychain_path"
+        security import "$cert_path" -k "$keychain_path" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+        security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+        security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | tr -d '"')
+        security find-identity -v -p codesigning "$keychain_path"
+        rm -f "$cert_path"
+    - name: Code sign
+      if: steps.secrets.outputs.present == 'true'
+      run: |
+        set -euo pipefail
+        codesign -s "$SIGNING_IDENTITY" -f --deep --timestamp --options runtime \
+          --entitlements archicad-addon/Tools/addon.entitlements "$OUT/$ADDON.bundle"
+        codesign --verify --deep --strict --verbose=2 "$OUT/$ADDON.bundle"
+    - name: Notarize and staple
+      if: steps.secrets.outputs.present == 'true'
+      env:
+        APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      run: |
+        set -euo pipefail
+        umask 077
+        key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+        printf '%s\n' "$APPLE_API_KEY_P8" > "$key_path"
+        ditto -c -k --keepParent "$OUT/$ADDON.bundle" "$RUNNER_TEMP/$ADDON-notarize.zip"
+        xcrun notarytool submit "$RUNNER_TEMP/$ADDON-notarize.zip" \
+          --key "$key_path" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
+          --wait --timeout 60m --output-format json > "$RUNNER_TEMP/notarize.json"
+        cat "$RUNNER_TEMP/notarize.json"
+        status=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$RUNNER_TEMP/notarize.json")
+        if [ "$status" != "Accepted" ]; then
+          id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$RUNNER_TEMP/notarize.json")
+          [ -n "$id" ] && xcrun notarytool log "$id" --key "$key_path" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" || true
+          echo "::error::Notarization ended with status '$status'."
+          exit 1
+        fi
+        xcrun stapler staple "$OUT/$ADDON.bundle"
+        xcrun stapler validate "$OUT/$ADDON.bundle"
+        spctl -a -vv -t install "$OUT/$ADDON.bundle" || true
+    - name: Create zip file
+      run: ditto -c -k --keepParent "$OUT/$ADDON.bundle" "$OUT/$ADDON.zip"
+    - name: Upload the signed add-on
+      if: steps.secrets.outputs.present == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-mac-${{ matrix.params.acVersion }}
+        path: ${{ env.OUT }}/${{ env.ADDON }}.zip
+        if-no-files-found: error
+    - name: Upload the unsigned add-on
+      if: steps.secrets.outputs.present != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: unsigned-mac-${{ matrix.params.acVersion }}
+        path: ${{ env.OUT }}/${{ env.ADDON }}.zip
+        if-no-files-found: error
+
+  build_win:
+    needs: devkits
+    strategy:
+      fail-fast: false
+      matrix:
+        params: ${{ fromJSON(needs.devkits.outputs.win) }}
+    runs-on: [ windows-2022 ]
+    continue-on-error: true
+    env:
+      ADDON: RenzoArchicad_AC${{ matrix.params.acVersion }}_Win
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+    - name: Download Development Kit
+      run: python archicad-addon/Tools/download_and_unzip.py ${{ matrix.params.devKitUrl }} archicad-addon/Build/DevKits/AC${{ matrix.params.acVersion }}
+    - name: Generate Project <AC29
+      if: matrix.params.acVersion < 29
+      run: cmake -B archicad-addon/Build -G "Visual Studio 17 2022" -A "x64" -T "v142" -DAC_VERSION=${{ matrix.params.acVersion }} -DAC_API_DEVKIT_DIR="archicad-addon/Build/DevKits/AC${{ matrix.params.acVersion }}/Support" archicad-addon
+    - name: Generate Project >=AC29
+      if: matrix.params.acVersion >= 29
+      run: cmake -B archicad-addon/Build -G "Visual Studio 17 2022" -A "x64" -T "v143" -DAC_VERSION=${{ matrix.params.acVersion }} -DAC_API_DEVKIT_DIR="archicad-addon/Build/DevKits/AC${{ matrix.params.acVersion }}/Support" archicad-addon
+    - name: Build RelWithDebInfo
+      run: cmake --build archicad-addon/Build --config RelWithDebInfo
+    - name: Check the size of the common schema definitions
+      shell: bash
+      run: |
+        file=archicad-addon/Build/ResourceObjects/Images/CommonSchemaDefinitions.json
+        test -f "$file" || { echo "::error::$file was not compiled."; exit 1; }
+        size=$(wc -c < "$file" | tr -d ' ')
+        echo "$file: $size bytes (limit $SCHEMA_SIZE_LIMIT)"
+        if [ "$size" -gt "$SCHEMA_SIZE_LIMIT" ]; then
+          echo "::error::The compiled CommonSchemaDefinitions.json is $size bytes, over $SCHEMA_SIZE_LIMIT. Archicad would not register the commands that refer to it."
+          exit 1
+        fi
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-win-${{ matrix.params.acVersion }}
+        path: archicad-addon/Build/RelWithDebInfo/${{ env.ADDON }}.apx
+        if-no-files-found: error
+
+  release:
+    needs: [build_mac, build_win]
+    # The optional builds may fail; whether the required one is there is checked below.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check the signing secrets
+      id: secrets
+      env:
+        CSC_LINK: ${{ secrets.CSC_LINK }}
+        APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+      run: |
+        if [ -n "$CSC_LINK" ] && [ -n "$APPLE_API_KEY_P8" ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::The Apple signing secrets are not set, so nothing is released. The unsigned add-ons are on this workflow run."
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Download the add-ons
+      if: steps.secrets.outputs.present == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        pattern: release-*
+        path: artifacts
+        merge-multiple: true
+    - name: Check the add-ons
+      if: steps.secrets.outputs.present == 'true'
+      run: |
+        ls -l artifacts
+        if [ ! -f artifacts/RenzoArchicad_AC30_Mac.zip ]; then
+          echo "::error::RenzoArchicad_AC30_Mac.zip is missing: the required Archicad 30 macOS build failed."
+          exit 1
+        fi
+    - name: Publish the release
+      if: steps.secrets.outputs.present == 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: artifacts/*
+        fail_on_unmatched_files: true
+        draft: false
+        prerelease: false
+        generate_release_notes: false
