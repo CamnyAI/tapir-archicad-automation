@@ -9126,6 +9126,9 @@ GS::Optional<GS::UniString> GetTextureCoordinatesCommand::GetRawResponseSchema (
                                         ]
                                     }
                                 },
+    )"
+    // MSVC limits a string literal to 16 KB (C2026): the schema is two adjacent literals.
+    R"(
                                 "materials": {
                                     "type": "array",
                                     "description": "The materials the faces of the element refer to by materialIndex, in the order of their first use.",
