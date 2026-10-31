@@ -5050,12 +5050,13 @@ GS::Optional<GS::UniString> CreateOpeningsCommand::GetRawResponseSchema () const
     })";
 }
 
-#ifndef ServerMainVers_2900
 // How far above the opening's bottom edge its anchor point sits. anchorAltitude is
 // measured to the anchor, so placing the bottom at a requested altitude means adding
 // this back - APIAnc_?T anchors sit a full height above the bottom, APIAnc_?M half of
 // it, APIAnc_?B on it. The horizontal half of the anchor is irrelevant here and is
 // deliberately left alone, so the existing horizontal placement is unchanged.
+// From Archicad 29 ModifyOpenings uses it too: the Opening interface places the
+// opening's shape by the same anchor around its anchor point.
 static double GetAnchorHeightOffset (API_AnchorID anchor, double height)
 {
     switch (anchor) {
@@ -5071,7 +5072,6 @@ static double GetAnchorHeightOffset (API_AnchorID anchor, double height)
             return 0.0;
     }
 }
-#endif
 
 GS::ObjectState CreateOpeningsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl&) const
 {
@@ -8252,9 +8252,9 @@ GS::Optional<GS::UniString> ModifyOpeningsCommand::GetInputParametersSchema () c
                     "type": "object",
                     "properties": {
                         "elementId": { "$ref": "#/ElementId" },
-                        "basePoint": { "$ref": "#/Coordinate3D", "description": "New base point of the opening: its bottom left corner in world space, the same point CreateOpenings takes." },
-                        "width": { "type": "number", "exclusiveMinimum": 0.0, "description": "New width of the opening." },
-                        "height": { "type": "number", "exclusiveMinimum": 0.0, "description": "New height of the opening. The bottom edge stays where it is, the opening grows or shrinks upwards." }
+                        "basePoint": { "$ref": "#/Coordinate3D", "description": "New base point of the opening, the point CreateOpenings takes: the opening moves to where CreateOpenings puts an opening of its size for this point. From Archicad 29 that is where its anchor point goes (raised by the opening's height on Archicad 29); the opening stays in the plane of its host element." },
+                        "width": { "type": "number", "exclusiveMinimum": 0.0, "description": "New width of the opening, along its x axis. The opening's anchor decides which side moves (both, with a center anchor). From Archicad 29 a custom (polygonal) opening, which is what CreateOpenings makes there, is resized by scaling its polygon; one with curved edges or holes is not resized." },
+                        "height": { "type": "number", "exclusiveMinimum": 0.0, "description": "New height of the opening, along its y axis. The bottom edge stays where it is, the opening grows or shrinks upwards. From Archicad 29 an opening in a horizontal plane (in a slab or roof) has no bottom edge and changes around its anchor instead." }
                     },
                     "additionalProperties": false,
                     "required": ["elementId"]
@@ -8296,35 +8296,108 @@ static GS::Optional<GS::UniString> GetOpeningModification (const GS::ObjectState
 
 #ifdef ServerMainVers_2900
 
-// Measured positions of the opening are compared with this tolerance, the one CommandBase uses
-// for coordinates.
+// Sizes and positions read back from the opening are compared with this tolerance, the one
+// CommandBase uses for coordinates.
 constexpr double OpeningPlacementTolerance = 0.001;
 
-// The lowest Z of the opening's 3D bounds: the bottom edge of an opening in a wall, measured
-// the way Get3DBoundingBoxes reports it.
-static GS::Optional<double> GetOpeningBottom (const API_Guid& openingGuid)
+// The size of an opening along its own x and y axes. GetWidth and GetHeight only answer for a
+// Rectangular or Circular opening ("std::nullopt if the polygon type is not Rectangular or
+// Circular", OpeningExtrusionParameters.hpp), and the openings CreateOpenings makes are custom
+// ones: PlacePolygonal creates a custom opening "even if the default was set to rectangular or
+// circular" (OpeningDefault.hpp), whose shape type reads back as Polygonal. Archicad keeps the
+// polygon of such an opening centred on its own origin (a polygon set over 0..w x 0..h reads
+// back over -w/2..w/2 x -h/2..h/2) and places it by the anchor like a rectangle of the same
+// size, so the size of a Polygonal opening is the extent of its polygon.
+struct OpeningSize {
+    double width  = 0.0;
+    double height = 0.0;
+};
+
+static std::optional<OpeningSize> GetOpeningSize (const ACAPI::Element::Opening& opening)
 {
-    API_Elem_Head elemHead = {};
-    elemHead.guid = openingGuid;
-    API_Box3D bounds = {};
-    if (ACAPI_Element_CalcBounds (&elemHead, &bounds) != NoError) {
-        return {};
+    const auto extrusionParameters = opening.GetExtrusionParameters ();
+    if (extrusionParameters.GetShapeType () == ACAPI::Element::ShapeType::Polygonal) {
+        const std::optional<Geometry::Polygon2D> polygon = opening.GetOpeningGeometry ().GetPolygon ();
+        if (!polygon.has_value () || polygon->IsEmpty ()) {
+            return std::nullopt;
+        }
+        const Box2DData& box = polygon->GetBoundBox ();
+        return OpeningSize { box.GetWidth (), box.GetHeight () };
     }
-    return bounds.zMin;
+    const std::optional<double> width = extrusionParameters.GetWidth ();
+    const std::optional<double> height = extrusionParameters.GetHeight ();
+    if (!width.has_value () || !height.has_value ()) {
+        return std::nullopt;
+    }
+    return OpeningSize { *width, *height };
+}
+
+// The polygon of a Polygonal opening scaled to the given size around its centre. SetWidth and
+// SetHeight return an error for this shape type (OpeningExtrusionParameters.hpp), so a custom
+// opening is resized by giving it a new polygon. Only polygons with straight edges and no holes
+// are rebuilt - the ones CreateOpenings and SetOpeningDetails make -, because an arc scaled by
+// different factors along x and y is no longer an arc.
+static std::optional<Geometry::Polygon2D> GetResizedOpeningPolygon (const Geometry::Polygon2D& polygon, const OpeningSize& size, GS::UniString& error)
+{
+    if (polygon.HasArcs () || polygon.GetContourNum () != 1) {
+        error = "The custom polygon of the opening has curved edges or holes, which ModifyOpenings does not resize; give it a new polygon with SetOpeningDetails instead.";
+        return std::nullopt;
+    }
+    const Box2DData& box = polygon.GetBoundBox ();
+    if (box.GetWidth () < OpeningPlacementTolerance || box.GetHeight () < OpeningPlacementTolerance) {
+        error = "The custom polygon of the opening has no width or height to scale.";
+        return std::nullopt;
+    }
+    const Point2D center = box.GetMidPoint ();
+    const double scaleX = size.width / box.GetWidth ();
+    const double scaleY = size.height / box.GetHeight ();
+    GS::Array<Point2D> corners;
+    for (auto it = polygon.BeginVertex (); it != polygon.EndVertex (); ++it) {
+        const Point2D& coord = it->GetCoord ();
+        corners.Push (Point2D (center.x + (coord.x - center.x) * scaleX, center.y + (coord.y - center.y) * scaleY));
+    }
+    auto polygons = Geometry::Polygon2D::Create (corners, 0 /*Geometry::PolyCreateFlags*/);
+    if (polygons.IsEmpty ()) {
+        error = "The resized polygon of the opening is not a valid polygon.";
+        return std::nullopt;
+    }
+    return polygons.PopLargest ();
 }
 
 // A pure translation; API_Tranmat is a 3x4 matrix stored row by row with the translation in
 // tmx[3], tmx[7] and tmx[11] (see CreateHotlinkTransformation).
-static API_Tranmat CreateTranslation (double dx, double dy, double dz)
+static API_Tranmat CreateTranslation (const API_Vector3D& offset)
 {
     API_Tranmat translation = {};
     translation.tmx[0]  = 1.0;
-    translation.tmx[3]  = dx;
+    translation.tmx[3]  = offset.x;
     translation.tmx[5]  = 1.0;
-    translation.tmx[7]  = dy;
+    translation.tmx[7]  = offset.y;
     translation.tmx[10] = 1.0;
-    translation.tmx[11] = dz;
+    translation.tmx[11] = offset.z;
     return translation;
+}
+
+static double OpeningDotProduct (const API_Vector3D& a, const API_Vector3D& b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static API_Vector3D ScaleOpeningVector (const API_Vector3D& v, double factor)
+{
+    return { v.x * factor, v.y * factor, v.z * factor };
+}
+
+static bool IsSameOpeningPoint (const API_Coord3D& a, const API_Coord3D& b)
+{
+    return std::fabs (a.x - b.x) <= OpeningPlacementTolerance &&
+           std::fabs (a.y - b.y) <= OpeningPlacementTolerance &&
+           std::fabs (a.z - b.z) <= OpeningPlacementTolerance;
+}
+
+static GS::UniString OpeningPointToString (const API_Coord3D& c)
+{
+    return GS::UniString::Printf ("(%.3f, %.3f, %.3f)", c.x, c.y, c.z);
 }
 
 // Archicad 29 replaced the API_OpeningType struct, which the pre-29 branch of ModifyOpenings
@@ -8332,19 +8405,31 @@ static API_Tranmat CreateTranslation (double dx, double dy, double dz)
 // places new openings through its OpeningDefault there, and this changes an existing one
 // through Opening::Modify. Like the MEP element modifiers in MEPCommands.cpp, Modify opens its
 // own undoable command (it takes the undo string), so it is not wrapped in
-// ACAPI_CallUndoableCommand.
+// ACAPI_CallUndoableCommand. A resize and a move are two Modify calls, because the move of a
+// resize that keeps the bottom edge needs the height the opening really took (a Linked
+// opening changes both sizes when one is set).
 //
-// The extrusion parameters keep the anchor point of the opening - its centre by default - in
-// place when the height changes, and the vertical placement rules of PlacePolygonal differ
-// between Archicad 29 and 30 (see CreateOpenings). So instead of deriving the bottom edge from
-// the anchor rules, it is measured through the 3D bounds before and after the change and the
-// opening is moved by the difference: a new height keeps the bottom edge where it was and a new
-// basePoint puts it on the requested Z, as on Archicad 28 and earlier. The horizontal position
-// of a new basePoint follows CreateOpenings: the anchor point of the opening geometry - the
-// origin PlacePolygonal was given - is translated to the point CreateOpenings would place at.
+// Placement, as measured on Archicad 30 with probes inside the wall: the anchor point of the
+// opening geometry is the point PlacePolygonal was given, and the opening's shape sits on it
+// by the anchor of its extrusion parameters - with the template's TopCenter anchor the top
+// edge's midpoint is on the anchor point, and a new height or polygon keeps the top edge.
+// ACAPI_Element_CalcBounds cannot measure it instead: for an opening its Z range is 0..0.
+// So:
+// - width and height go through SetWidth/SetHeight for a Rectangular or Circular opening and
+//   through a scaled polygon for a Polygonal one (GetResizedOpeningPolygon);
+// - a new height keeps the bottom edge, as up to Archicad 28: the opening is moved along its
+//   y axis by how much further the anchor now sits above the bottom (GetAnchorHeightOffset).
+//   Only openings whose y axis rises (openings in walls) have a bottom edge; an opening in a
+//   horizontal plane (slab, roof) keeps its anchor point, as a new width does;
+// - basePoint moves the anchor point to where CreateOpenings puts it for that point: the
+//   point itself, raised by the opening's height on Archicad 29 (see CreateOpenings). The
+//   part of the move along the extrusion direction is dropped, the way PlacePolygonal
+//   projects its point onto the host, so the opening stays in its host's plane.
+// Each step is read back, and a size or position the opening did not take fails the item.
 static GS::ObjectState ModifyOpeningThroughOpeningInterface (const API_Guid& openingGuid, const OpeningModification& modification)
 {
     using ACAPI::Element::Opening;
+    using ACAPI::Element::ShapeType;
 
     const ACAPI::UniqueID openingId (APIGuid2GSGuid (openingGuid), ACAPI_GetToken ());
     ACAPI::Result<Opening> opening = Opening::Get (openingId);
@@ -8352,94 +8437,144 @@ static GS::ObjectState ModifyOpeningThroughOpeningInterface (const API_Guid& ope
         return CreateFailedExecutionResult (APIERR_BADID, "Failed to load opening: the element is missing or is not an Opening.");
     }
 
-    // Openings in a wall are extruded horizontally; only those have a bottom edge to keep.
-    const auto extrusionDirection = opening->GetOpeningGeometry ().GetExtrusionDirection ();
-    const bool hasBottomEdge = std::fabs (extrusionDirection.z) < OpeningPlacementTolerance;
-    const GS::Optional<double> bottomBefore = hasBottomEdge ? GetOpeningBottom (openingGuid) : GS::Optional<double> ();
-
-    if (modification.width.HasValue () || modification.height.HasValue ()) {
-        ACAPI::Result<void> result =opening->Modify ([&] (Opening::Modifier& modifier) {
-            auto&& extrusionParameters = modifier.GetExtrusionParameters ();
-            if (modification.width.HasValue ()) {
-                (void) extrusionParameters.SetWidth (modification.width.Get ());
-            }
-            if (modification.height.HasValue ()) {
-                (void) extrusionParameters.SetHeight (modification.height.Get ());
-            }
-        }, "Modify Openings");
-        if (result.IsErr ()) {
-            return CreateFailedExecutionResult (result.UnwrapErr ().kind, "Failed to modify opening.");
-        }
-
-        // Read the opening back: a value the interface silently kept is a failure of the item.
-        ACAPI::Result<Opening> resized = Opening::Get (openingId);
-        if (resized.IsErr ()) {
-            return CreateFailedExecutionResult (resized.UnwrapErr ().kind, "Failed to read the opening back.");
-        }
-        const auto& extrusionParameters = resized->GetExtrusionParameters ();
-        // Both are empty unless the opening's polygon is Rectangular or Circular.
-        const std::optional<double> width = extrusionParameters.GetWidth ();
-        const std::optional<double> height = extrusionParameters.GetHeight ();
-        if ((modification.width.HasValue () && (!width.has_value () || std::fabs (*width - modification.width.Get ()) > OpeningPlacementTolerance)) ||
-            (modification.height.HasValue () && (!height.has_value () || std::fabs (*height - modification.height.Get ()) > OpeningPlacementTolerance))) {
-            return CreateFailedExecutionResult (APIERR_GENERAL, "The opening did not take the new width or height.");
-        }
+    const std::optional<OpeningSize> sizeBefore = GetOpeningSize (*opening);
+    if (!sizeBefore.has_value ()) {
+        return CreateFailedExecutionResult (APIERR_GENERAL, "The opening reports no size: it has neither a width and a height nor a polygon.");
+    }
+    const bool isPolygonal = opening->GetExtrusionParameters ().GetShapeType () == ShapeType::Polygonal;
+    const API_AnchorID anchor = opening->GetExtrusionParameters ().GetAnchor ();
+    OpeningAxes axes = {};
+    API_Coord3D anchorPoint = {};
+    {
+        const auto geometry = opening->GetOpeningGeometry ();
+        axes = GetOpeningAxes (geometry);
+        anchorPoint = geometry.GetAnchorPoint ();
     }
 
+    const bool resize = modification.width.HasValue () || modification.height.HasValue ();
+    OpeningSize sizeAfter = *sizeBefore;
+    if (resize) {
+        OpeningSize requested = *sizeBefore;
+        if (modification.width.HasValue ()) {
+            requested.width = modification.width.Get ();
+        }
+        if (modification.height.HasValue ()) {
+            requested.height = modification.height.Get ();
+        }
+
+        std::optional<Geometry::Polygon2D> resizedPolygon;
+        if (isPolygonal) {
+            const std::optional<Geometry::Polygon2D> polygon = opening->GetOpeningGeometry ().GetPolygon ();
+            GS::UniString polygonError;
+            if (polygon.has_value ()) {
+                resizedPolygon = GetResizedOpeningPolygon (*polygon, requested, polygonError);
+            }
+            if (!resizedPolygon.has_value ()) {
+                return CreateFailedExecutionResult (APIERR_BADPARS, polygonError.IsEmpty () ? GS::UniString ("The opening has no polygon to resize.") : polygonError);
+            }
+        }
+
+        // The first size Archicad refuses stops the rest; a width set before it stays.
+        GSErrCode failedError = NoError;
+        GS::UniString failedMessage;
+        const auto check = [&] (ACAPI::Result<void> result, const char* what) -> bool {
+            if (result.IsErr ()) {
+                failedError = result.UnwrapErr ().kind;
+                failedMessage = GS::UniString::Printf ("Failed to set the %s of the opening: ", what) + GS::UniString (result.UnwrapErr ().text.c_str ());
+                return false;
+            }
+            return true;
+        };
+        ACAPI::Result<void> result = opening->Modify ([&] (Opening::Modifier& modifier) {
+            if (resizedPolygon.has_value ()) {
+                modifier.GetOpeningGeometry ().SetPolygon (*resizedPolygon);
+                return;
+            }
+            auto&& extrusionParameters = modifier.GetExtrusionParameters ();
+            if (modification.width.HasValue () && !check (extrusionParameters.SetWidth (modification.width.Get ()), "width")) {
+                return;
+            }
+            if (modification.height.HasValue ()) {
+                check (extrusionParameters.SetHeight (modification.height.Get ()), "height");
+            }
+        }, "Modify Openings");
+        if (failedError != NoError) {
+            return CreateFailedExecutionResult (failedError, failedMessage);
+        }
+        if (result.IsErr ()) {
+            return CreateFailedExecutionResult (result.UnwrapErr ().kind, "Failed to resize the opening: " + GS::UniString (result.UnwrapErr ().text.c_str ()));
+        }
+
+        ACAPI::Result<Opening> resizedOpening = Opening::Get (openingId);
+        if (resizedOpening.IsErr ()) {
+            return CreateFailedExecutionResult (resizedOpening.UnwrapErr ().kind, "Failed to read the opening back.");
+        }
+        const std::optional<OpeningSize> resized = GetOpeningSize (*resizedOpening);
+        if (!resized.has_value () ||
+            (modification.width.HasValue () && std::fabs (resized->width - requested.width) > OpeningPlacementTolerance) ||
+            (modification.height.HasValue () && std::fabs (resized->height - requested.height) > OpeningPlacementTolerance)) {
+            return CreateFailedExecutionResult (APIERR_GENERAL, resized.has_value ()
+                ? GS::UniString::Printf ("The opening did not take the new size: it is %.3f wide and %.3f high instead of %.3f x %.3f.", resized->width, resized->height, requested.width, requested.height)
+                : GS::UniString ("The opening reports no size after the resize."));
+        }
+        sizeAfter = *resized;
+        anchorPoint = resizedOpening->GetOpeningGeometry ().GetAnchorPoint ();
+    }
+
+    // The move of the anchor point, if any.
+    API_Vector3D offset = { 0.0, 0.0, 0.0 };
     if (modification.basePoint.HasValue ()) {
+        API_Coord3D placementPoint = modification.basePoint.Get ();
+#ifndef ServerMainVers_3000
+        placementPoint.z += sizeAfter.height;
+#endif
+        offset = { placementPoint.x - anchorPoint.x, placementPoint.y - anchorPoint.y, placementPoint.z - anchorPoint.z };
+        const API_Vector3D& direction = axes.extrusionDirection;
+        const double directionLength2 = OpeningDotProduct (direction, direction);
+        if (directionLength2 > 0.0) {
+            const API_Vector3D along = ScaleOpeningVector (direction, OpeningDotProduct (offset, direction) / directionLength2);
+            offset = { offset.x - along.x, offset.y - along.y, offset.z - along.z };
+        }
+    } else if (std::fabs (sizeAfter.height - sizeBefore->height) > OpeningPlacementTolerance && std::fabs (axes.yAxis.z) > OpeningPlacementTolerance) {
+        // Along the opening's y axis its shape covers -GetAnchorHeightOffset .. height - GetAnchorHeightOffset
+        // around the anchor point; keep the end of it that is lower in the world where it was.
+        const double shift = axes.yAxis.z > 0.0
+            ? GetAnchorHeightOffset (anchor, sizeAfter.height) - GetAnchorHeightOffset (anchor, sizeBefore->height)
+            : (sizeBefore->height - GetAnchorHeightOffset (anchor, sizeBefore->height)) - (sizeAfter.height - GetAnchorHeightOffset (anchor, sizeAfter.height));
+        offset = ScaleOpeningVector (axes.yAxis, shift);
+    }
+
+    if (OpeningDotProduct (offset, offset) > OpeningPlacementTolerance * OpeningPlacementTolerance) {
+        const API_Coord3D expected = { anchorPoint.x + offset.x, anchorPoint.y + offset.y, anchorPoint.z + offset.z };
+        const API_Tranmat translation = CreateTranslation (offset);
         ACAPI::Result<Opening> current = Opening::Get (openingId);
         if (current.IsErr ()) {
             return CreateFailedExecutionResult (current.UnwrapErr ().kind, "Failed to read the opening back.");
         }
-
-        // The point CreateOpenings hands to PlacePolygonal for this basePoint: on Archicad 29
-        // PlacePolygonal hangs the polygon below the point, so CreateOpenings raises it by the
-        // height there; Archicad 30 puts the sill on the point itself (#848).
-        API_Coord3D placementPoint = modification.basePoint.Get ();
-#ifndef ServerMainVers_3000
-        const std::optional<double> currentHeight = current->GetExtrusionParameters ().GetHeight ();
-        if (!currentHeight.has_value ()) {
-            return CreateFailedExecutionResult (APIERR_BADPARS, "The opening reports no height (its polygon is not Rectangular or Circular), so basePoint cannot be applied on Archicad 29.");
-        }
-        placementPoint.z += *currentHeight;
-#endif
-        const auto anchorPoint = current->GetOpeningGeometry ().GetAnchorPoint ();
-        const API_Tranmat translation = CreateTranslation (placementPoint.x - anchorPoint.x,
-                                                           placementPoint.y - anchorPoint.y,
-                                                           placementPoint.z - anchorPoint.z);
-        ACAPI::Result<void> result =current->Modify ([&] (Opening::Modifier& modifier) {
-            (void) modifier.GetOpeningGeometry ().Transform (translation);
+        GSErrCode failedError = NoError;
+        GS::UniString failedMessage;
+        ACAPI::Result<void> result = current->Modify ([&] (Opening::Modifier& modifier) {
+            ACAPI::Result<void> transformResult = modifier.GetOpeningGeometry ().Transform (translation);
+            if (transformResult.IsErr ()) {
+                failedError = transformResult.UnwrapErr ().kind;
+                failedMessage = GS::UniString (transformResult.UnwrapErr ().text.c_str ());
+            }
         }, "Modify Openings");
-        if (result.IsErr ()) {
-            return CreateFailedExecutionResult (result.UnwrapErr ().kind, "Failed to move opening.");
+        if (failedError == NoError && result.IsErr ()) {
+            failedError = result.UnwrapErr ().kind;
+            failedMessage = GS::UniString (result.UnwrapErr ().text.c_str ());
         }
-    }
+        if (failedError != NoError) {
+            return CreateFailedExecutionResult (failedError, GS::UniString (resize ? "The opening was resized, but moving it failed: " : "Failed to move the opening: ") + failedMessage);
+        }
 
-    // Put the bottom edge where it belongs - unchanged after a resize, on basePoint.z after a
-    // move - and fail the item when it is not there afterwards either.
-    GS::Optional<double> targetBottom = bottomBefore;
-    if (hasBottomEdge && modification.basePoint.HasValue ()) {
-        targetBottom = modification.basePoint.Get ().z;
-    }
-    if (targetBottom.HasValue ()) {
-        GS::Optional<double> bottom = GetOpeningBottom (openingGuid);
-        if (bottom.HasValue () && std::fabs (bottom.Get () - targetBottom.Get ()) > OpeningPlacementTolerance) {
-            ACAPI::Result<Opening> moved = Opening::Get (openingId);
-            if (moved.IsErr ()) {
-                return CreateFailedExecutionResult (moved.UnwrapErr ().kind, "Failed to read the opening back.");
-            }
-            const API_Tranmat correction = CreateTranslation (0.0, 0.0, targetBottom.Get () - bottom.Get ());
-            ACAPI::Result<void> result =moved->Modify ([&] (Opening::Modifier& modifier) {
-                (void) modifier.GetOpeningGeometry ().Transform (correction);
-            }, "Modify Openings");
-            if (result.IsErr ()) {
-                return CreateFailedExecutionResult (result.UnwrapErr ().kind, "Failed to move opening.");
-            }
-            bottom = GetOpeningBottom (openingGuid);
+        ACAPI::Result<Opening> movedOpening = Opening::Get (openingId);
+        if (movedOpening.IsErr ()) {
+            return CreateFailedExecutionResult (movedOpening.UnwrapErr ().kind, "Failed to read the opening back.");
         }
-        if (!bottom.HasValue () || std::fabs (bottom.Get () - targetBottom.Get ()) > OpeningPlacementTolerance) {
-            return CreateFailedExecutionResult (APIERR_GENERAL, GS::UniString::Printf ("The bottom edge of the opening is at z=%.3f instead of the requested z=%.3f.",
-                                                                                       bottom.HasValue () ? bottom.Get () : 0.0, targetBottom.Get ()));
+        const API_Coord3D moved = movedOpening->GetOpeningGeometry ().GetAnchorPoint ();
+        if (!IsSameOpeningPoint (moved, expected)) {
+            return CreateFailedExecutionResult (APIERR_GENERAL, GS::UniString ("The opening is not where it was moved: its anchor point is at ") + OpeningPointToString (moved) + " instead of " + OpeningPointToString (expected) + ".");
         }
     }
 

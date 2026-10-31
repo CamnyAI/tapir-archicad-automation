@@ -1,18 +1,23 @@
 import aclib
 
 # Creates a wall with an opening in it, then changes the opening's size and position with
-# ModifyOpenings and reads the result back through its 3D bounding box. ModifyOpenings takes
-# the fields CreateOpenings takes: width, height and basePoint (the bottom left corner of the
-# opening in world space). A new height keeps the bottom edge where it is. The output is the same
-# on every Archicad version: up to Archicad 28 the command writes API_OpeningType, from Archicad 29
-# it goes through ACAPI::Element::Opening::Modify.
+# ModifyOpenings and reads the result back. ModifyOpenings takes the fields CreateOpenings takes:
+# width, height and basePoint, and a new basePoint puts the opening where CreateOpenings puts one
+# of its size for that point. A new height keeps the bottom edge where it is. Up to Archicad 28
+# the command writes API_OpeningType, from Archicad 29 it goes through
+# ACAPI::Element::Opening::Modify.
+#
+# From Archicad 29 CreateOpenings makes a custom (polygonal) opening, which ModifyOpenings resizes
+# by scaling its polygon. GetOpeningDetails (Archicad 29 or newer) reads it back: the polygon gives
+# the size and the anchor point the position. Where the opening sits around its anchor point is
+# set by its anchor (with the stock TopCenter anchor it hangs from the point).
 
 walls = aclib.RunTapirCommand ('CreateWalls', {
     'wallsData': [
         {
             'begCoordinate': { 'x': 0.0, 'y': -30.0 },
             'endCoordinate': { 'x': 8.0, 'y': -30.0 },
-            'height': 3.0,
+            'height': 4.0,
             'thickness': 0.3
         }
     ]
@@ -29,20 +34,33 @@ openings = aclib.RunTapirCommand ('CreateOpenings', {
     ]
 })['elements']
 
-def GetBoundingBoxOf (element):
-    boundingBoxes = aclib.RunTapirCommand ('Get3DBoundingBoxes', {
-        'elements': [element]
-    }, debug = False)['boundingBoxes3D']
-    return boundingBoxes[0]['boundingBox3D']
+archicadVersion = aclib.RunCommand ('API.GetProductInfo')['version']
 
-def PrintSize (label, box):
-    print ('{}: width={:.3f} height={:.3f} bottom={:.3f}'.format (
-        label, box['xMax'] - box['xMin'], box['zMax'] - box['zMin'], box['zMin']))
+def PrintOpening (label):
+    boundingBox = aclib.RunTapirCommand ('Get3DBoundingBoxes', {
+        'elements': openings
+    }, debug = False)['boundingBoxes3D'][0]['boundingBox3D']
+    line = '{}: width along the wall={:.3f}'.format (label, boundingBox['xMax'] - boundingBox['xMin'])
+    if archicadVersion >= 29:
+        opening = aclib.RunTapirCommand ('GetOpeningDetails', {
+            'elements': openings
+        }, debug = False)['openings'][0]
+        polygon = opening['geometry'].get ('polygon')
+        if polygon:
+            width = max (p['x'] for p in polygon) - min (p['x'] for p in polygon)
+            height = max (p['y'] for p in polygon) - min (p['y'] for p in polygon)
+        else:
+            width = opening['extrusionParameters']['width']
+            height = opening['extrusionParameters']['height']
+        anchorPoint = opening['geometry']['anchorPoint']
+        line += ' size={:.3f} x {:.3f} anchor=({:.3f}, {:.3f}, {:.3f}) {}'.format (
+            width, height, anchorPoint['x'], anchorPoint['y'], anchorPoint['z'], opening['extrusionParameters']['anchor'])
+    print (line)
 
-PrintSize ('created', GetBoundingBoxOf (openings[0]))
+PrintOpening ('created')
 
-# Resize only: the bottom edge stays at z = 1.0.
-aclib.RunTapirCommand ('ModifyOpenings', {
+# Resize only: the bottom edge stays where it is, so a top anchor rises by the added height.
+result = aclib.RunTapirCommand ('ModifyOpenings', {
     'openingsWithDetails': [
         {
             'elementId': openings[0]['elementId'],
@@ -50,19 +68,21 @@ aclib.RunTapirCommand ('ModifyOpenings', {
             'height': 1.5
         }
     ]
-})
-PrintSize ('resized', GetBoundingBoxOf (openings[0]))
+}, debug = False)
+print ('resize: success={}'.format (result['executionResults'][0]['success']))
+PrintOpening ('resized')
 
-# Move: the bottom left corner goes to the new base point.
-aclib.RunTapirCommand ('ModifyOpenings', {
+# Move: the opening goes where CreateOpenings puts an opening of its size for this base point.
+result = aclib.RunTapirCommand ('ModifyOpenings', {
     'openingsWithDetails': [
         {
             'elementId': openings[0]['elementId'],
-            'basePoint': { 'x': 5.0, 'y': -30.0, 'z': 0.5 }
+            'basePoint': { 'x': 5.0, 'y': -30.0, 'z': 1.8 }
         }
     ]
-})
-PrintSize ('moved', GetBoundingBoxOf (openings[0]))
+}, debug = False)
+print ('move: success={}'.format (result['executionResults'][0]['success']))
+PrintOpening ('moved')
 
 # An item without any field to change fails; other items of the same call are still applied.
 result = aclib.RunTapirCommand ('ModifyOpenings', {

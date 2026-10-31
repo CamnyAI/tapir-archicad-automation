@@ -19,8 +19,8 @@ namespace TapirGrasshopperPlugin.Components.ElementsComponents
 
         private static readonly List<Field> FieldDefinitions = new List<Field>
         {
-            new Field("BasePoints", "basePoint", FieldKind.Point3D, "New base point of the opening: its bottom left corner in world space, the same point CreateOpenings takes."),
-            new Field("Widths", "width", FieldKind.Number, "New width of the opening."),
+            new Field("BasePoints", "basePoint", FieldKind.Point3D, "New base point of the opening, the point CreateOpenings takes: the opening moves to where CreateOpenings puts one of its size for this point."),
+            new Field("Widths", "width", FieldKind.Number, "New width of the opening. A custom (polygonal) opening is resized by scaling its polygon."),
             new Field("Heights", "height", FieldKind.Number, "New height of the opening. The bottom edge stays where it is.")
         };
 

@@ -972,7 +972,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<ModifyOpeningsCommand> (
             elementCommands, "1.7.4",
-            "Modifies Opening elements: the width, the height and the base point CreateOpenings takes. A new height keeps the bottom edge in place."
+            "Modifies Opening elements: the width, the height and the base point CreateOpenings takes. A new height keeps the bottom edge in place. From Archicad 29 the custom (polygonal) openings CreateOpenings makes are resized by scaling their polygon."
         );
         err |= RegisterCommand<ModifyMorphsCommand> (
             elementCommands, "1.4.0",
