@@ -94,6 +94,77 @@ void AddElementList (GS::ObjectState& response, const char* fieldName, const Ele
     }
 }
 
+// The 3D model based generator compares the 3D model of the 3D window, and Archicad builds and
+// updates that model only while the 3D window is in front ("you get the model which can be seen in
+// the 3D window", ACAPI_ModelAccess_GetComponent in ACAPinc.h). Tested in Archicad 30: with the
+// floor plan in front every 3DModel comparison was empty, also with the 3D window open behind it;
+// a model generated in a sight of our own (ACAPI_Sight_CreateSight,
+// ACAPI_ModelAccess_GenerateModelWithSeparateComponents) and ACAPI_Database_RebuildCurrentDatabase
+// on the 3D database did not change that, and ACAPI_Sight_Switch3DSight crashed Archicad while the
+// 3D window had never been open. So while a 3DModel state is captured or compared with the current
+// project, the 3D window is brought to the front (and rebuilt if the Work Environment does not
+// rebuild it when it is brought to the front), and the window and database that were current
+// before are brought back when this guard goes out of scope. ACAPI_Window_CloseWindow only closes
+// an add-on's own windows, so the 3D window stays open behind them.
+class Front3DWindow
+{
+public:
+    Front3DWindow () = default;
+    Front3DWindow (const Front3DWindow&) = delete;
+    Front3DWindow& operator= (const Front3DWindow&) = delete;
+
+    GSErrCode Activate ()
+    {
+        API_WindowInfo currentWindow {};
+        GSErrCode err = ACAPI_Window_GetCurrentWindow (&currentWindow);
+        if (err != NoError) {
+            return err;
+        }
+        if (currentWindow.typeID == APIWind_3DModelID) {
+            return NoError;
+        }
+
+        previousWindow = currentWindow;
+        hasPreviousDatabase = ACAPI_Database_GetCurrentDatabase (&previousDatabase) == NoError;
+
+        API_WindowInfo window3D {};
+        window3D.typeID = APIWind_3DModelID;
+        err = ACAPI_Window_ChangeWindow (&window3D);
+        if (err != NoError) {
+            return err;
+        }
+        switched = true;
+
+        API_ImagingAndCalcPrefs imagingPrefs {};
+        if (ACAPI_ProjectSetting_GetPreferences (&imagingPrefs, APIPrefs_ImagingAndCalcID) == NoError && !imagingPrefs.autoRebuild3D) {
+            err = ACAPI_View_Rebuild (nullptr);
+        }
+        return err;
+    }
+
+    ~Front3DWindow ()
+    {
+        if (!switched) {
+            return;
+        }
+        ACAPI_Window_ChangeWindow (&previousWindow);
+        if (hasPreviousDatabase) {
+            ACAPI_Database_ChangeCurrentDatabase (&previousDatabase);
+        }
+    }
+
+private:
+    bool             switched = false;
+    bool             hasPreviousDatabase = false;
+    API_WindowInfo   previousWindow {};
+    API_DatabaseInfo previousDatabase {};
+};
+
+GS::ObjectState Front3DWindowError (GSErrCode err)
+{
+    return CreateErrorResponse (err, "The 3DModel state is the 3D model of the 3D window, which Archicad only updates while the 3D window is in front, and the 3D window could not be brought to the front (or rebuilt there).");
+}
+
 GSErrCode ProjectEventHandler (API_NotifyEventID notifID, Int32 /*param*/)
 {
     switch (notifID) {
@@ -141,7 +212,7 @@ GS::Optional<GS::UniString> CaptureElementStateCommand::GetInputParametersSchema
         "properties": {
             "type": {
                 "type": "string",
-                "description": "How GetElementChangesSince finds the changed elements between this state and another one. ModificationStamp (the default) compares the modification stamps of the elements, so any change to an element counts. 3DModel compares the 3D model of the elements, so only a change that alters the 3D model counts, and capturing it generates the 3D model of the project. Two states can only be compared when they were captured with the same type.",
+                "description": "How GetElementChangesSince finds the changed elements between this state and another one. ModificationStamp (the default) compares the modification stamps of the elements, so any change to an element counts. 3DModel compares the 3D model of the 3D window, so only a change that alters the 3D model counts, and only the elements the 3D window shows are covered (all of them after Show All in 3D; a selection shown in 3D and the 3D filter settings limit them). Archicad updates that model only while the 3D window is in front, so capturing a 3DModel state, and comparing one with the current project, brings the 3D window to the front for the call and then the window that was in front back; the 3D window stays open behind it. Two states can only be compared when they were captured with the same type.",
                 "enum": [
                     "ModificationStamp",
                     "3DModel"
@@ -208,6 +279,15 @@ GS::ObjectState CaptureElementStateCommand::Execute (const GS::ObjectState& para
         return CreateErrorResponse (err, "Failed to create the folder of the element states in the temporary folder.");
     }
 
+    Front3DWindow front3DWindow;
+    if (stored.type == APIDiff_3DModelBased) {
+        err = front3DWindow.Activate ();
+        if (err != NoError) {
+            DeleteStateFile (stored);
+            return Front3DWindowError (err);
+        }
+    }
+
     API_ElemDifferenceGeneratorState state;
     state.stateType = APIDiffState_InFile;
     state.fileLocation = stored.fileLocation;
@@ -254,7 +334,7 @@ GS::Optional<GS::UniString> GetElementChangesSinceCommand::GetInputParametersSch
             },
             "toStateId": {
                 "type": "object",
-                "description": "The state to compare to, as returned by CaptureElementState with the same type as stateId. If omitted, the current state of the project is used, so the response lists what changed since stateId was captured.",
+                "description": "The state to compare to, as returned by CaptureElementState with the same type as stateId. If omitted, the current state of the project is used, so the response lists what changed since stateId was captured; for a 3DModel state that brings the 3D window to the front for the call, as CaptureElementState does.",
                 "properties": {
                     "guid": {
                         "$ref": "#/Guid"
@@ -334,6 +414,15 @@ GS::ObjectState GetElementChangesSinceCommand::Execute (const GS::ObjectState& p
         }
         toState.stateType = APIDiffState_InFile;
         toState.fileLocation = to->fileLocation;
+    }
+
+    // Two stored states need no current 3D model; the current project's does.
+    Front3DWindow front3DWindow;
+    if (from->type == APIDiff_3DModelBased && toState.stateType == APIDiffState_CurrentProject) {
+        const GSErrCode err = front3DWindow.Activate ();
+        if (err != NoError) {
+            return Front3DWindowError (err);
+        }
     }
 
     API_ElemDifference difference {};

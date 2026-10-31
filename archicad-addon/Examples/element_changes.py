@@ -11,7 +11,8 @@ release the ones you no longer need.
 import aclib
 
 # The default type compares the modification stamps of the elements; '3DModel' would count
-# only changes that alter the 3D model.
+# only changes that alter the 3D model of the 3D window, which CaptureElementState and
+# GetElementChangesSince bring to the front for the call (Archicad only updates it there).
 startState = aclib.RunTapirCommand ('CaptureElementState', {'type': 'ModificationStamp'})['stateId']
 
 wall = aclib.RunTapirCommand ('CreateWalls', {

@@ -8,6 +8,9 @@
 // file in the temporary folder and keeps it under a stateId; GetElementChangesSince compares a
 // stored state with another stored state or with the current project. The states (and their
 // files) are dropped by ReleaseElementState, when the project is closed and when Archicad quits.
+// A 3DModel state is the 3D model of the 3D window, which Archicad only updates while that window is
+// in front, so capturing one and comparing one with the current project bring it to the front for
+// the call (see Front3DWindow in the .cpp).
 
 class CaptureElementStateCommand : public CommandBase
 {

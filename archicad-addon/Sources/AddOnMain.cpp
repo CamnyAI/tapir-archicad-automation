@@ -541,7 +541,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<CaptureElementStateCommand> (
             elementCommands, "1.7.4",
-            "Captures the current state of the elements of the project and returns a stateId for it, so that GetElementChangesSince can later list what was created, modified and deleted since. The optional type selects how changes are detected (modification stamps by default, or the 3D model). The state is kept in a file in the temporary folder for the Archicad session only: it is lost when the project is closed or Archicad restarts, and ReleaseElementState frees it earlier."
+            "Captures the current state of the elements of the project and returns a stateId for it, so that GetElementChangesSince can later list what was created, modified and deleted since. The optional type selects how changes are detected (modification stamps by default, or the 3D model of the 3D window, which is brought to the front for the call because Archicad only updates its model there). The state is kept in a file in the temporary folder for the Archicad session only: it is lost when the project is closed or Archicad restarts, and ReleaseElementState frees it earlier."
         );
         err |= RegisterCommand<GetElementChangesSinceCommand> (
             elementCommands, "1.7.4",
