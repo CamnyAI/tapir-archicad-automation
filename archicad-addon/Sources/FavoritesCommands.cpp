@@ -118,7 +118,7 @@ GS::Optional<GS::UniString> GetAllFavoritesCommand::GetRawResponseSchema () cons
                         },
                         "elementType": {
                             "$ref": "#/ElementType",
-                            "description": "The element type of the Favorite. Missing when Archicad cannot read the Favorite's element settings."
+                            "description": "The element type of the Favorite. Missing for the external element types, which have no name in ElementType: those of the analytical model (supports, links, loads) and of MEP elements."
                         }
                     },
                     "additionalProperties": false,
@@ -167,9 +167,22 @@ GS::ObjectState GetAllFavoritesCommand::Execute (const GS::ObjectState& paramete
         }
 
         GS::ObjectState favoriteOs ("name", favoriteName.Unwrap ());
-        const auto element = favorite.GetOldElementDefault ();
-        if (element.IsOk ()) {
-            favoriteOs.Add ("elementType", GetElementTypeNonLocalizedName (GetElemTypeId (element.Unwrap ().header)));
+        // GetElementType reads only the type. GetOldElementDefault, used here before, reads all
+        // the settings, which Archicad 30 cannot do for the Favorites of external element types
+        // (see IsFavoriteOfExternalElement).
+        API_ElemTypeID favoriteTypeId = elemTypeId;
+        if (!filterByType) {
+            try {
+                const auto elemType = favorite.GetElementType ();
+                if (elemType.IsOk ()) {
+                    favoriteTypeId = GetElemTypeId (elemType.Unwrap ());
+                }
+            } catch (...) {
+                favoriteTypeId = API_ZombieElemID;
+            }
+        }
+        if (favoriteTypeId != API_ZombieElemID && favoriteTypeId != API_ExternalElemID) {
+            favoriteOs.Add ("elementType", GetElementTypeNonLocalizedName (favoriteTypeId));
         }
         favoritesList (favoriteOs);
     }
@@ -477,9 +490,9 @@ GS::ObjectState GetFavoriteDetailsCommand::Execute (const GS::ObjectState& param
         favorite.classifications.New ();
         favorite.elemCategoryValues.New ();
 
-        const GSErrCode err = ACAPI_Favorite_Get (&favorite);
+        const GSErrCode err = GetFavoriteSafely (favorite);
         if (err != NoError) {
-            favoriteDetails (CreateErrorResponse (err, GS::UniString::Printf ("Failed to get favorite '%T'.", favoriteName.ToPrintf ())));
+            favoriteDetails (CreateErrorResponse (err, GetFavoriteErrorMessage (err, favoriteName)));
             continue;
         }
 
@@ -598,9 +611,9 @@ GS::ObjectState ApplyFavoritesToElementDefaultsCommand::Execute (const GS::Objec
         for (const GS::UniString& favoriteName : favorites) {
             favorite.name = favoriteName;
 
-            GSErrCode err = ACAPI_Favorite_Get (&favorite);
+            GSErrCode err = GetFavoriteSafely (favorite);
             if (err != NoError) {
-                executionResults (CreateFailedExecutionResult (err, "Failed to get favorite"));
+                executionResults (CreateFailedExecutionResult (err, GetFavoriteErrorMessage (err, favoriteName)));
                 ACAPI_DisposeElemMemoHdls (&favorite.memo.Get ());
                 continue;
             }
@@ -982,12 +995,23 @@ static GSErrCode WithFavoriteSource (const ACAPI::Favorite::FavoriteManager& man
             errorMessage = GS::UniString::Printf ("The source Favorite '%T' was not found.", sourceFavoriteName.ToPrintf ());
             return sourceFavorite.UnwrapErr ().kind;
         }
-        const auto elementDefault = sourceFavorite.Unwrap ().GetElementDefault ();
-        if (elementDefault.IsErr ()) {
-            errorMessage = GS::UniString::Printf ("Failed to get the settings of the source Favorite '%T': %s", sourceFavoriteName.ToPrintf (), elementDefault.UnwrapErr ().text.c_str ());
-            return elementDefault.UnwrapErr ().kind;
+        if (IsFavoriteOfExternalElement (sourceFavoriteName)) {
+            errorMessage = GetFavoriteErrorMessage (APIERR_NOTSUPPORTED, sourceFavoriteName);
+            return APIERR_NOTSUPPORTED;
         }
-        return func (elementDefault.Unwrap ());
+        // It runs inside an undoable command, so an exception from Archicad (see
+        // IsFavoriteOfExternalElement) must not leave it.
+        try {
+            const auto elementDefault = sourceFavorite.Unwrap ().GetElementDefault ();
+            if (elementDefault.IsErr ()) {
+                errorMessage = GS::UniString::Printf ("Failed to get the settings of the source Favorite '%T': %s", sourceFavoriteName.ToPrintf (), elementDefault.UnwrapErr ().text.c_str ());
+                return elementDefault.UnwrapErr ().kind;
+            }
+            return func (elementDefault.Unwrap ());
+        } catch (...) {
+            errorMessage = GS::UniString::Printf ("Archicad threw an exception while reading the settings of the source Favorite '%T': %T", sourceFavoriteName.ToPrintf (), GetCurrentExceptionText ().ToPrintf ());
+            return APIERR_NOTSUPPORTED;
+        }
     }
 
     if (toolDefault != "Opening") {
@@ -1665,9 +1689,9 @@ GS::ObjectState ApplyFavoritesToElementsCommand::Execute (const GS::ObjectState&
             favorite.elemCategoryValues.New ();
             item.Get ("favorite", favorite.name);
 
-            err = ACAPI_Favorite_Get (&favorite);
+            err = GetFavoriteSafely (favorite);
             if (err != NoError) {
-                executionResults (CreateFailedExecutionResult (err, "Failed to get favorite"));
+                executionResults (CreateFailedExecutionResult (err, GetFavoriteErrorMessage (err, favorite.name)));
                 ACAPI_DisposeElemMemoHdls (&favorite.memo.Get ());
                 continue;
             }
@@ -2269,9 +2293,9 @@ GS::ObjectState GetFavoriteSettingsCommand::Execute (const GS::ObjectState& para
             }
         });
 
-        const GSErrCode err = ACAPI_Favorite_Get (&favorite);
+        const GSErrCode err = GetFavoriteSafely (favorite);
         if (err != NoError) {
-            favoriteSettingsAdder (CreateErrorResponse (err, GS::UniString::Printf ("Failed to get favorite '%T'.", favoriteName.ToPrintf ())));
+            favoriteSettingsAdder (CreateErrorResponse (err, GetFavoriteErrorMessage (err, favoriteName)));
             continue;
         }
 
@@ -2669,6 +2693,9 @@ GS::ObjectState ApplyFavoriteToToolDefaultCommand::Execute (const GS::ObjectStat
         return CreateErrorResponse (favorite.UnwrapErr ().kind, GS::UniString::Printf ("The Favorite '%T' was not found.", favoriteName.ToPrintf ()));
     }
 
+    if (IsFavoriteOfExternalElement (favoriteName)) {
+        return CreateErrorResponse (APIERR_NOTSUPPORTED, GetFavoriteErrorMessage (APIERR_NOTSUPPORTED, favoriteName));
+    }
     const auto elementDefault = favorite.Unwrap ().GetElementDefault ();
     if (elementDefault.IsErr ()) {
         return CreateErrorResponse (elementDefault.UnwrapErr ().kind, GS::UniString::Printf ("Failed to get the settings of the Favorite: %s", elementDefault.UnwrapErr ().text.c_str ()));

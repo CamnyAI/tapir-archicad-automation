@@ -1,0 +1,97 @@
+{
+  "title": "Favorites of analytical and MEP element types (Archicad 30 template): GetAllFavorites lists them, the commands that read Favorite settings refuse them instead of crashing Archicad",
+  "minTapir": "1.7.4",
+  "minArchicad": "29",
+  "steps": [
+    {
+      "id": "every Favorite, Analytical Support and Point Load ones included",
+      "command": "GetAllFavorites",
+      "creates": false,
+      "timeout": 120,
+      "expect": [
+        {"path": "favorites[0].name", "exists": true, "name": "answered with the Favorites"}
+      ]
+    },
+    {
+      "id": "Wall Favorites keep their type",
+      "command": "GetAllFavorites",
+      "creates": false,
+      "params": {"elementType": "Wall"},
+      "expect": [
+        {"path": "favorites[0].elementType", "eq": "Wall", "name": "the type given"}
+      ],
+      "save": {"wallFavorite": "favorites[0].name"}
+    },
+    {
+      "id": "details of a support, a load, a link, an MEP Favorite and a wall Favorite",
+      "command": "GetFavoriteDetails",
+      "creates": false,
+      "params": {
+        "favorites": ["Structural Support - Fixed", "Point Load - Global Z", "Structural Link - Rigid", "Duct Circular", "${wallFavorite}"]
+      },
+      "expect": [
+        {"path": "favoriteDetails", "len": 5, "name": "one item per Favorite"},
+        {"path": "favoriteDetails[0].error.code", "eq": -2130312313, "name": "support: APIERR_NOTSUPPORTED"},
+        {"path": "favoriteDetails[0].error.message", "contains": "external element type", "name": "support: says why"},
+        {"path": "favoriteDetails[1].error.code", "eq": -2130312313, "name": "load: APIERR_NOTSUPPORTED (reading it crashed Archicad)"},
+        {"path": "favoriteDetails[2].error.code", "eq": -2130312313, "name": "link: APIERR_NOTSUPPORTED"},
+        {"path": "favoriteDetails[3].error.code", "eq": -2130312313, "name": "MEP: APIERR_NOTSUPPORTED"},
+        {"path": "favoriteDetails[4].elementType", "eq": "Wall", "name": "the wall Favorite is still read"}
+      ]
+    },
+    {
+      "id": "settings of a support, a load and a wall Favorite",
+      "command": "GetFavoriteSettings",
+      "creates": false,
+      "params": {
+        "favorites": ["Structural Support - Pinned", "Line Load - Global Z", "${wallFavorite}"]
+      },
+      "expect": [
+        {"path": "favoriteSettings", "len": 3, "name": "one item per Favorite"},
+        {"path": "favoriteSettings[0].error.code", "eq": -2130312313, "name": "support: APIERR_NOTSUPPORTED"},
+        {"path": "favoriteSettings[1].error.code", "eq": -2130312313, "name": "load: APIERR_NOTSUPPORTED"},
+        {"path": "favoriteSettings[2].elementType", "eq": "Wall", "name": "the wall Favorite is still read"}
+      ]
+    },
+    {
+      "id": "apply a support and a load Favorite to the tool defaults",
+      "command": "ApplyFavoritesToElementDefaults",
+      "creates": false,
+      "params": {
+        "favorites": ["Structural Support - Roller", "Surface Load - Global Z", "${wallFavorite}"]
+      },
+      "expect": [
+        {"path": "executionResults[0].success", "eq": false, "name": "support refused"},
+        {"path": "executionResults[0].error.code", "eq": -2130312313, "name": "with APIERR_NOTSUPPORTED"},
+        {"path": "executionResults[1].success", "eq": false, "name": "load refused"},
+        {"path": "executionResults[2].success", "eq": true, "name": "the wall Favorite is applied"}
+      ]
+    },
+    {
+      "id": "a load Favorite as the tool default",
+      "command": "ApplyFavoriteToToolDefault",
+      "creates": false,
+      "params": {"favoriteName": "Point Load - Global Z"},
+      "expect": [
+        {"path": "error.code", "eq": -2130312313, "name": "refused with APIERR_NOTSUPPORTED"}
+      ]
+    },
+    {
+      "id": "a new Favorite from a support Favorite",
+      "command": "CreateFavorite",
+      "creates": false,
+      "params": {"name": "Check copy of a support", "source": {"favoriteName": "Structural Support - Fixed"}},
+      "expect": [
+        {"path": "error.code", "eq": -2130312313, "name": "refused with APIERR_NOTSUPPORTED"}
+      ]
+    },
+    {
+      "id": "Archicad is still running",
+      "command": "GetAddOnVersion",
+      "creates": false,
+      "expect": [
+        {"path": "version", "exists": true, "name": "it answers"}
+      ]
+    }
+  ]
+}

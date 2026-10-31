@@ -2,9 +2,14 @@
 
 #include "SchemaDefinitions.hpp"
 #include "MigrationHelper.hpp"
+#include "GSException.hpp"
+#ifdef ServerMainVers_2900
+#include "ACAPI/Favorite.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 
 constexpr double EPS = 0.001;
 constexpr const char* CommandNamespace = "TapirCommand";
@@ -68,6 +73,60 @@ GS::ObjectState CreateErrorResponse (GSErrCode errorCode, const GS::UniString& e
     error.Add ("code", errorCode);
     error.Add ("message", errorMessage.ToCStr ().Get ());
     return GS::ObjectState ("error", error);
+}
+
+GS::UniString GetCurrentExceptionText ()
+{
+    try {
+        throw;
+    } catch (const GS::Exception& e) {
+        const GS::UniString name (e.GetName ());
+        return e.GetMessage ().IsEmpty () ? name : name + ": " + e.GetMessage ();
+    } catch (const std::exception& e) {
+        return GS::UniString (e.what ());
+    } catch (...) {
+        return "an exception of an unknown type";
+    }
+}
+
+bool IsFavoriteOfExternalElement (const GS::UniString& favoriteName)
+{
+#ifdef ServerMainVers_2900
+    try {
+        // GetElementType reads only the type, not the settings.
+        const auto favorite = ACAPI::Favorite::GetFavoriteManager ().GetFavoriteByName (favoriteName);
+        if (favorite.IsErr ()) {
+            return false;
+        }
+        const auto elemType = favorite.Unwrap ().GetElementType ();
+        return elemType.IsOk () && elemType.Unwrap ().typeID == API_ExternalElemID;
+    } catch (...) {
+        return true;
+    }
+#else
+    UNUSED_PARAMETER (favoriteName);
+    return false;
+#endif
+}
+
+GSErrCode GetFavoriteSafely (API_Favorite& favorite)
+{
+    if (IsFavoriteOfExternalElement (favorite.name)) {
+        return APIERR_NOTSUPPORTED;
+    }
+    try {
+        return ACAPI_Favorite_Get (&favorite);
+    } catch (...) {
+        return APIERR_NOTSUPPORTED;
+    }
+}
+
+GS::UniString GetFavoriteErrorMessage (GSErrCode err, const GS::UniString& favoriteName)
+{
+    if (err == APIERR_NOTSUPPORTED) {
+        return GS::UniString::Printf ("The settings of the Favorite '%T' cannot be read: it is a Favorite of an external element type (an analytical support, link or load, an MEP element, ...), and reading those makes Archicad throw or crash.", favoriteName.ToPrintf ());
+    }
+    return GS::UniString::Printf ("Failed to get favorite '%T'.", favoriteName.ToPrintf ());
 }
 
 GS::ObjectState CreateFailedExecutionResult (GSErrCode errorCode, const GS::UniString& errorMessage)

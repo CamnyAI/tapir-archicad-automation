@@ -51,6 +51,26 @@ GS::ObjectState CreateFailedExecutionResult (const GS::ObjectState& errorRespons
 GS::ObjectState CreateSuccessfulExecutionResult ();
 GS::UniString DescribeDefinitionChangeError (GSErrCode err);
 
+// Reading the settings of a Favorite of an external element type (the analytical model's supports,
+// links and loads, MEP elements, ...) goes through Archicad's conversion of external elements, which
+// fails for Favorites in Archicad 30: it throws a C++ exception for Analytical Support Favorites
+// (AMIO::AM2AMIO_AnalyticalSupportSettings) and dereferences a null pointer for Point Load Favorites
+// (AMElem::Load::GetDrawIndex). Nothing between the add-on and Archicad's main loop catches an
+// exception either, so one that leaves a command aborts Archicad too.
+//
+// True for a Favorite of an external element type: its settings must not be read. Archicad 29 and
+// newer only; before, the API cannot tell the type of a Favorite without reading its settings.
+bool IsFavoriteOfExternalElement (const GS::UniString& favoriteName);
+// ACAPI_Favorite_Get, except that it answers APIERR_NOTSUPPORTED for a Favorite of an external
+// element type (without reading it) and for an exception thrown inside Archicad.
+GSErrCode GetFavoriteSafely (API_Favorite& favorite);
+// The message for a failed GetFavoriteSafely: the reason for APIERR_NOTSUPPORTED, otherwise that the
+// Favorite could not be read (usually: there is no Favorite with this exact name).
+GS::UniString GetFavoriteErrorMessage (GSErrCode err, const GS::UniString& favoriteName);
+// The text of the exception being handled: the name and message of a GS::Exception, or what () of a
+// std::exception. Call it only inside a catch block.
+GS::UniString GetCurrentExceptionText ();
+
 // Adds {"guid": ...} to `list` for every guid in `from` that is not in `minus`. The import
 // commands use it to report what an import created and removed.
 template <typename List>

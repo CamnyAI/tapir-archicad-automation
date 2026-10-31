@@ -68,10 +68,26 @@
 #include "GeometryOperationCommands.hpp"
 #include "CurrentViewSettingsCommands.hpp"
 
+// Every command runs inside this: an exception that leaves Execute would abort Archicad, as nothing
+// between the add-on and its main loop catches it, so it is answered as the command's error instead.
+template <typename CommandType>
+class ExceptionSafeCommand final : public CommandType
+{
+public:
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override
+    {
+        try {
+            return CommandType::Execute (parameters, processControl);
+        } catch (...) {
+            return CreateErrorResponse (APIERR_GENERAL, "Archicad threw an exception during the command: " + GetCurrentExceptionText ());
+        }
+    }
+};
+
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
 {
-    GS::Owner<CommandType> command = GS::NewOwned<CommandType> ();
+    GS::Owner<ExceptionSafeCommand<CommandType>> command = GS::NewOwned<ExceptionSafeCommand<CommandType>> ();
     const GS::String commandName = command->GetName ();
     group.commands.push_back (CommandInfo (
         commandName,

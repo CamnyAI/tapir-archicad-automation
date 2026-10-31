@@ -468,7 +468,7 @@ static GSErrCode ApplyWindowOrDoorFavoriteToDefaults (const GS::ObjectState& dat
     favorite.classifications.New ();
     favorite.elemCategoryValues.New ();
 
-    GSErrCode err = ACAPI_Favorite_Get (&favorite);
+    GSErrCode err = GetFavoriteSafely (favorite);
     const auto disposeFavoriteMemos = [&]() {
         ACAPI_DisposeElemMemoHdls (&favorite.memo.Get ());
         if (favorite.memoMarker.HasValue ()) {
@@ -11159,7 +11159,7 @@ GSErrCode ApplyFavoriteToElementDefaults (const GS::UniString& favoriteName, API
     favorite.classifications.New ();
     favorite.elemCategoryValues.New ();
 
-    GSErrCode err = ACAPI_Favorite_Get (&favorite);
+    GSErrCode err = GetFavoriteSafely (favorite);
     const auto disposeFavoriteMemos = [&] () {
         ACAPI_DisposeElemMemoHdls (&favorite.memo.Get ());
     };

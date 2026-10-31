@@ -1360,7 +1360,7 @@ GSErrCode ApplyMarkerFavoriteToDefaults (const GS::UniString& favoriteName, API_
     favorite.classifications.New ();
     favorite.elemCategoryValues.New ();
 
-    GSErrCode err = ACAPI_Favorite_Get (&favorite);
+    GSErrCode err = GetFavoriteSafely (favorite);
     const GS::OnExit disposeFavoriteMemos ([&] () {
         ACAPI_DisposeElemMemoHdls (&favorite.memo.Get ());
         if (favorite.memoMarker.HasValue ()) {
