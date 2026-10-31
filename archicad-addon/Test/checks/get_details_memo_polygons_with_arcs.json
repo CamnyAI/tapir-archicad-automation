@@ -1,0 +1,325 @@
+{
+  "title": "GetDetailsOfElements reads polylines, hatches, slabs and meshes with arcs and holes, and polylines given arcs outside them",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "open polyline, arcs on the first and the last segment",
+      "command": "CreatePolylines",
+      "params": {
+        "polylinesData": [
+          {
+            "coordinates": [
+              { "x": 900, "y": 900 },
+              { "x": 902, "y": 900 },
+              { "x": 902, "y": 902 },
+              { "x": 900, "y": 902 }
+            ],
+            "arcs": [
+              { "begIndex": 0, "endIndex": 1, "arcAngle": 0.5 },
+              { "begIndex": 2, "endIndex": 3, "arcAngle": -0.5 }
+            ]
+          }
+        ]
+      },
+      "save": { "openPolyline": "elements" }
+    },
+    {
+      "id": "read the open polyline",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${openPolyline}", "fields": [ "type", "details" ] },
+      "expect": [
+        { "path": "detailsOfElements[0].details.coordinates", "len": 4, "name": "four points" },
+        { "path": "detailsOfElements[0].details.arcs", "len": 2, "name": "both arcs" },
+        { "path": "detailsOfElements[0].details.arcs[0].begIndex", "eq": 0 },
+        { "path": "detailsOfElements[0].details.arcs[0].endIndex", "eq": 1 },
+        { "path": "detailsOfElements[0].details.arcs[1].begIndex", "eq": 2 },
+        { "path": "detailsOfElements[0].details.arcs[1].endIndex", "eq": 3 },
+        { "path": "detailsOfElements[0].details.arcs[1].arcAngle", "approx": -0.5 }
+      ]
+    },
+    {
+      "id": "closed polyline, arc on the closing segment",
+      "command": "CreatePolylines",
+      "params": {
+        "polylinesData": [
+          {
+            "coordinates": [
+              { "x": 905, "y": 900 },
+              { "x": 907, "y": 900 },
+              { "x": 907, "y": 902 },
+              { "x": 905, "y": 902 },
+              { "x": 905, "y": 900 }
+            ],
+            "arcs": [ { "begIndex": 3, "endIndex": 4, "arcAngle": 0.6 } ]
+          }
+        ]
+      },
+      "save": { "closedPolyline": "elements" }
+    },
+    {
+      "id": "read the closed polyline",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${closedPolyline}", "fields": [ "details" ] },
+      "expect": [
+        { "path": "detailsOfElements[0].details.coordinates", "len": 5 },
+        { "path": "detailsOfElements[0].details.arcs", "len": 1 },
+        { "path": "detailsOfElements[0].details.arcs[0].begIndex", "eq": 3 },
+        { "path": "detailsOfElements[0].details.arcs[0].endIndex", "eq": 4 }
+      ]
+    },
+    {
+      "id": "polylines whose arc names a point past the last one or before the first",
+      "command": "CreatePolylines",
+      "params": {
+        "polylinesData": [
+          {
+            "coordinates": [ { "x": 910, "y": 900 }, { "x": 912, "y": 900 }, { "x": 912, "y": 902 } ],
+            "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ]
+          },
+          {
+            "coordinates": [ { "x": 915, "y": 900 }, { "x": 917, "y": 900 }, { "x": 917, "y": 902 } ],
+            "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ]
+          }
+        ]
+      },
+      "save": { "badPolylines": "elements" }
+    },
+    {
+      "id": "read them: the points come back, the arc that fits no segment is left out",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${badPolylines}", "fields": [ "type", "details" ] },
+      "expect": [
+        { "path": "detailsOfElements", "len": 2 },
+        { "path": "detailsOfElements[0].type", "eq": "PolyLine" },
+        { "path": "detailsOfElements[0].details.coordinates", "len": 3 },
+        { "path": "detailsOfElements[0].details.arcs", "exists": false },
+        { "path": "detailsOfElements[1].details.coordinates", "len": 3 },
+        { "path": "detailsOfElements[1].details.arcs", "exists": false }
+      ]
+    },
+    {
+      "id": "hatch with two holes, arcs on the outline and on a hole, closing edges included",
+      "command": "CreateHatches",
+      "params": {
+        "hatchesData": [
+          {
+            "coordinates": [
+              { "x": 900, "y": 910 },
+              { "x": 904, "y": 910 },
+              { "x": 904, "y": 913 },
+              { "x": 900, "y": 913 }
+            ],
+            "arcs": [
+              { "begIndex": 0, "endIndex": 1, "arcAngle": 0.4 },
+              { "begIndex": 3, "endIndex": 4, "arcAngle": 0.4 }
+            ],
+            "holes": [
+              {
+                "polygonOutline": [
+                  { "x": 900.5, "y": 910.5 },
+                  { "x": 901.5, "y": 910.5 },
+                  { "x": 901.5, "y": 911.5 },
+                  { "x": 900.5, "y": 911.5 }
+                ]
+              },
+              {
+                "polygonOutline": [
+                  { "x": 902.5, "y": 911 },
+                  { "x": 903.5, "y": 911 },
+                  { "x": 903.5, "y": 912 },
+                  { "x": 902.5, "y": 912 }
+                ],
+                "polygonArcs": [
+                  { "begIndex": 0, "endIndex": 1, "arcAngle": 1.0 },
+                  { "begIndex": 3, "endIndex": 4, "arcAngle": 1.0 }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "save": { "hatch": "elements" }
+    },
+    {
+      "id": "read the hatch",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${hatch}", "fields": [ "details" ] },
+      "expect": [
+        { "path": "detailsOfElements[0].details.coordinates", "len": 5 },
+        { "path": "detailsOfElements[0].details.arcs", "len": 2 },
+        { "path": "detailsOfElements[0].details.arcs[1].begIndex", "eq": 3 },
+        { "path": "detailsOfElements[0].details.arcs[1].endIndex", "eq": 4 },
+        { "path": "detailsOfElements[0].details.holes", "len": 2 },
+        { "path": "detailsOfElements[0].details.holes[0].polygonOutline", "len": 5 },
+        { "path": "detailsOfElements[0].details.holes[0].polygonArcs", "exists": false },
+        { "path": "detailsOfElements[0].details.holes[1].polygonArcs", "len": 2, "name": "hole arcs counted from the hole's first point" },
+        { "path": "detailsOfElements[0].details.holes[1].polygonArcs[0].begIndex", "eq": 0 },
+        { "path": "detailsOfElements[0].details.holes[1].polygonArcs[1].begIndex", "eq": 3 },
+        { "path": "detailsOfElements[0].details.holes[1].polygonArcs[1].endIndex", "eq": 4 }
+      ]
+    },
+    {
+      "id": "slab with a hole, an arc on the outline and on the hole",
+      "command": "CreateSlabs",
+      "params": {
+        "slabsData": [
+          {
+            "level": 0.0,
+            "polygonCoordinates": [
+              { "x": 900, "y": 920 },
+              { "x": 905, "y": 920 },
+              { "x": 905, "y": 925 },
+              { "x": 900, "y": 925 }
+            ],
+            "polygonArcs": [ { "begIndex": 1, "endIndex": 2, "arcAngle": 0.5 } ],
+            "holes": [
+              {
+                "polygonOutline": [
+                  { "x": 901, "y": 921 },
+                  { "x": 902, "y": 921 },
+                  { "x": 902, "y": 922 },
+                  { "x": 901, "y": 922 }
+                ],
+                "polygonArcs": [ { "begIndex": 0, "endIndex": 1, "arcAngle": 0.8 } ]
+              }
+            ]
+          }
+        ]
+      },
+      "save": { "slab": "elements" }
+    },
+    {
+      "id": "read the slab",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${slab}", "fields": [ "details" ] },
+      "expect": [
+        { "path": "detailsOfElements[0].details.polygonOutline", "len": 5 },
+        { "path": "detailsOfElements[0].details.polygonArcs[0].begIndex", "eq": 1 },
+        { "path": "detailsOfElements[0].details.polygonArcs[0].endIndex", "eq": 2 },
+        { "path": "detailsOfElements[0].details.holes", "len": 1 },
+        { "path": "detailsOfElements[0].details.holes[0].polygonArcs[0].begIndex", "eq": 0 },
+        { "path": "detailsOfElements[0].details.holes[0].polygonArcs[0].endIndex", "eq": 1 }
+      ]
+    },
+    {
+      "id": "mesh with a hole",
+      "command": "CreateMeshes",
+      "params": {
+        "meshesData": [
+          {
+            "polygonCoordinates": [
+              { "x": 910, "y": 920 },
+              { "x": 915, "y": 920 },
+              { "x": 915, "y": 925 },
+              { "x": 910, "y": 925 }
+            ],
+            "holes": [
+              {
+                "polygonOutline": [
+                  { "x": 911, "y": 921 },
+                  { "x": 912, "y": 921 },
+                  { "x": 912, "y": 922 },
+                  { "x": 911, "y": 922 }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "save": { "mesh": "elements" }
+    },
+    {
+      "id": "read the mesh, with a height for every point",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${mesh}", "fields": [ "details" ] },
+      "expect": [
+        { "path": "detailsOfElements[0].details.polygonCoordinates", "len": 5 },
+        { "path": "detailsOfElements[0].details.polygonCoordinates[4].z", "exists": true },
+        { "path": "detailsOfElements[0].details.holes", "len": 1 },
+        { "path": "detailsOfElements[0].details.holes[0].polygonCoordinates", "len": 5 }
+      ]
+    },
+    {
+      "id": "40 polylines with an arc past their last point",
+      "command": "CreatePolylines",
+      "params": {
+        "polylinesData": [
+          { "coordinates": [ { "x": 920, "y": 900 }, { "x": 921, "y": 900 }, { "x": 921, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 922, "y": 900 }, { "x": 923, "y": 900 }, { "x": 923, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 924, "y": 900 }, { "x": 925, "y": 900 }, { "x": 925, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 926, "y": 900 }, { "x": 927, "y": 900 }, { "x": 927, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 928, "y": 900 }, { "x": 929, "y": 900 }, { "x": 929, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 930, "y": 900 }, { "x": 931, "y": 900 }, { "x": 931, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 932, "y": 900 }, { "x": 933, "y": 900 }, { "x": 933, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 934, "y": 900 }, { "x": 935, "y": 900 }, { "x": 935, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 936, "y": 900 }, { "x": 937, "y": 900 }, { "x": 937, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 938, "y": 900 }, { "x": 939, "y": 900 }, { "x": 939, "y": 901 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 920, "y": 902 }, { "x": 921, "y": 902 }, { "x": 921, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 922, "y": 902 }, { "x": 923, "y": 902 }, { "x": 923, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 924, "y": 902 }, { "x": 925, "y": 902 }, { "x": 925, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 926, "y": 902 }, { "x": 927, "y": 902 }, { "x": 927, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 928, "y": 902 }, { "x": 929, "y": 902 }, { "x": 929, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 930, "y": 902 }, { "x": 931, "y": 902 }, { "x": 931, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 932, "y": 902 }, { "x": 933, "y": 902 }, { "x": 933, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 934, "y": 902 }, { "x": 935, "y": 902 }, { "x": 935, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 936, "y": 902 }, { "x": 937, "y": 902 }, { "x": 937, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 938, "y": 902 }, { "x": 939, "y": 902 }, { "x": 939, "y": 903 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 920, "y": 904 }, { "x": 921, "y": 904 }, { "x": 921, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 922, "y": 904 }, { "x": 923, "y": 904 }, { "x": 923, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 924, "y": 904 }, { "x": 925, "y": 904 }, { "x": 925, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 926, "y": 904 }, { "x": 927, "y": 904 }, { "x": 927, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 928, "y": 904 }, { "x": 929, "y": 904 }, { "x": 929, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 930, "y": 904 }, { "x": 931, "y": 904 }, { "x": 931, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 932, "y": 904 }, { "x": 933, "y": 904 }, { "x": 933, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 934, "y": 904 }, { "x": 935, "y": 904 }, { "x": 935, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 936, "y": 904 }, { "x": 937, "y": 904 }, { "x": 937, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 938, "y": 904 }, { "x": 939, "y": 904 }, { "x": 939, "y": 905 } ], "arcs": [ { "begIndex": -1, "endIndex": 0, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 920, "y": 906 }, { "x": 921, "y": 906 }, { "x": 921, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 922, "y": 906 }, { "x": 923, "y": 906 }, { "x": 923, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 924, "y": 906 }, { "x": 925, "y": 906 }, { "x": 925, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 926, "y": 906 }, { "x": 927, "y": 906 }, { "x": 927, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 928, "y": 906 }, { "x": 929, "y": 906 }, { "x": 929, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 930, "y": 906 }, { "x": 931, "y": 906 }, { "x": 931, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 932, "y": 906 }, { "x": 933, "y": 906 }, { "x": 933, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 934, "y": 906 }, { "x": 935, "y": 906 }, { "x": 935, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 936, "y": 906 }, { "x": 937, "y": 906 }, { "x": 937, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] },
+          { "coordinates": [ { "x": 938, "y": 906 }, { "x": 939, "y": 906 }, { "x": 939, "y": 907 } ], "arcs": [ { "begIndex": 2, "endIndex": 3, "arcAngle": 0.5 } ] }
+        ]
+      },
+      "save": { "manyBadPolylines": "elements" }
+    },
+    {
+      "id": "read the 40 in one call, three times",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${manyBadPolylines}", "fields": [ "type", "details" ] },
+      "expect": [
+        { "path": "detailsOfElements", "len": 40 },
+        { "path": "detailsOfElements[39].details.coordinates", "len": 3 }
+      ]
+    },
+    {
+      "id": "second read",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${manyBadPolylines}", "fields": [ "type", "details" ] },
+      "expect": [ { "path": "detailsOfElements", "len": 40 } ]
+    },
+    {
+      "id": "third read, with every field",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": { "elements": "${manyBadPolylines}" },
+      "expect": [
+        { "path": "detailsOfElements", "len": 40 },
+        { "path": "detailsOfElements[0].type", "eq": "PolyLine" }
+      ]
+    }
+  ]
+}

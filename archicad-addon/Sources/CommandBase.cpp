@@ -3,6 +3,7 @@
 #include "SchemaDefinitions.hpp"
 #include "MigrationHelper.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 constexpr double EPS = 0.001;
@@ -164,6 +165,18 @@ GS::ObjectState CreatePolyArcObjectState (const API_PolyArc& a)
     return GS::ObjectState ("begIndex", a.begIndex - 1, "endIndex", a.endIndex - 1, "arcAngle", a.arcAngle);
 }
 
+static GSSize GetHandleItemCount (GSConstHandle handle, size_t itemSize)
+{
+    return handle == nullptr ? 0 : BMhGetSize (handle) / static_cast<GSSize> (itemSize);
+}
+
+// The coords, pends, parcs and meshPolyZ handles of a memo are read only within their own
+// sizes, and the handles are not assumed to agree with each other. An arc whose two nodes are
+// not in one contour is left out: it used to be added to polygons[nPolys], one past the end of
+// the vector, which corrupted the heap and crashed Archicad in GetDetailsOfElements (PolyLine
+// details, Archicad 30). A pends entry beyond the coordinates ends the contour list there, and
+// a meshPolyZ shorter than coords gives 0 for the missing heights. An inconsistent memo thus
+// yields fewer points or arcs, never a read or write outside the handles.
 std::vector<PolygonData> GetPolygonsFromMemoCoords (const API_Guid& elemGuid, bool includeZCoords)
 {
     API_ElementMemo memo = {};
@@ -173,46 +186,62 @@ std::vector<PolygonData> GetPolygonsFromMemoCoords (const API_Guid& elemGuid, bo
         return {};
     }
 
-    const GSSize nPolys = memo.pends == nullptr
-        ? 1
-        : BMhGetSize (reinterpret_cast<GSHandle> (memo.pends)) / sizeof (Int32) - 1;
-    std::vector<std::pair<GS::Int32, GS::Int32>> startEndIndices;
-    startEndIndices.reserve (nPolys);
-    std::vector<PolygonData> polygons (nPolys);
+    // Index 0 of coords is not a node, so the nodes are 1..lastCoordIndex.
+    const GSSize nCoordItems = GetHandleItemCount (reinterpret_cast<GSConstHandle> (memo.coords), sizeof (API_Coord));
+    if (nCoordItems < 2) {
+        return {};
+    }
+    const Int32 lastCoordIndex = static_cast<Int32> (nCoordItems - 1);
+
+    // pends[0] is 0, each further entry is the last node of a contour. Without a pends
+    // handle, or with one that names no contour, all the nodes form one contour.
+    std::vector<std::pair<Int32, Int32>> contours;
+    const GSSize nPends = GetHandleItemCount (reinterpret_cast<GSConstHandle> (memo.pends), sizeof (Int32));
     Int32 startIndex = 1;
-    for (GSIndex iPoly = 0; iPoly < nPolys; ++iPoly) {
-        Int32 endIndex = memo.pends == nullptr
-            ? (BMhGetSize (reinterpret_cast<GSHandle> (memo.coords)) / sizeof (API_Coord)) - 1
-            : (*memo.pends)[iPoly + 1];
-        startEndIndices.emplace_back (startIndex, endIndex);
+    for (GSIndex iPend = 1; iPend < nPends && startIndex <= lastCoordIndex; ++iPend) {
+        const Int32 endIndex = std::min ((*memo.pends)[iPend], lastCoordIndex);
+        if (endIndex < startIndex) {
+            break;
+        }
+        contours.emplace_back (startIndex, endIndex);
+        startIndex = endIndex + 1;
+    }
+    if (contours.empty ()) {
+        contours.emplace_back (1, lastCoordIndex);
+    }
+
+    const GSSize nZCoords = includeZCoords ? GetHandleItemCount (reinterpret_cast<GSConstHandle> (memo.meshPolyZ), sizeof (double)) : 0;
+    std::vector<PolygonData> polygons (contours.size ());
+    for (size_t iPoly = 0; iPoly < contours.size (); ++iPoly) {
+        const Int32 first = contours[iPoly].first;
+        const Int32 last = contours[iPoly].second;
         std::vector<API_Coord>& coords = polygons[iPoly].coords;
-        coords.reserve (endIndex - startIndex + 1);
-        for (GSIndex iCoord = startIndex; iCoord <= endIndex; ++iCoord) {
+        coords.reserve (last - first + 1);
+        for (Int32 iCoord = first; iCoord <= last; ++iCoord) {
             coords.push_back ((*memo.coords)[iCoord]);
         }
         if (includeZCoords) {
             std::vector<double>& zCoords = polygons[iPoly].zCoords;
-            zCoords.reserve (endIndex - startIndex + 1);
-            for (GSIndex iCoord = startIndex; iCoord <= endIndex; ++iCoord) {
-                zCoords.push_back ((*memo.meshPolyZ)[iCoord]);
+            zCoords.reserve (last - first + 1);
+            for (Int32 iCoord = first; iCoord <= last; ++iCoord) {
+                zCoords.push_back (iCoord < nZCoords ? (*memo.meshPolyZ)[iCoord] : 0.0);
             }
         }
-        startIndex = endIndex + 1;
     }
 
-    const GSSize nArcs = BMhGetSize (reinterpret_cast<GSHandle> (memo.parcs)) / sizeof (API_PolyArc);
+    const GSSize nArcs = GetHandleItemCount (reinterpret_cast<GSConstHandle> (memo.parcs), sizeof (API_PolyArc));
     for (GSIndex iArc = 0; iArc < nArcs; ++iArc) {
-        API_PolyArc& arc = (*memo.parcs)[iArc];
-        GSIndex iPoly = 0;
-        for (; iPoly < nPolys; ++iPoly) {
-            const auto& startEndPair = startEndIndices[iPoly];
-            if (arc.begIndex >= startEndPair.first && arc.endIndex <= startEndPair.second) {
-                arc.begIndex -= startEndPair.first - 1;
-                arc.endIndex -= startEndPair.first - 1;
+        API_PolyArc arc = (*memo.parcs)[iArc];
+        for (size_t iPoly = 0; iPoly < contours.size (); ++iPoly) {
+            const Int32 first = contours[iPoly].first;
+            const Int32 last = contours[iPoly].second;
+            if (arc.begIndex >= first && arc.begIndex <= last && arc.endIndex >= first && arc.endIndex <= last) {
+                arc.begIndex -= first - 1;
+                arc.endIndex -= first - 1;
+                polygons[iPoly].arcs.push_back (arc);
                 break;
             }
         }
-        polygons[iPoly].arcs.push_back (arc);
     }
 
     return polygons;

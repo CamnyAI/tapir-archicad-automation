@@ -1976,43 +1976,50 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
             case API_CurtainWallPanelID: {
                 API_Element ownerCW = {};
                 ownerCW.header.guid = elem.cwPanel.owner;
-                ACAPI_Element_Get(&ownerCW);
 
                 API_ElementMemo cwMemo = {};
                 const GS::OnExit cwMemoGuard ([&cwMemo] () { ACAPI_DisposeElemMemoHdls (&cwMemo); });
-                ACAPI_Element_GetMemo(ownerCW.header.guid, &cwMemo, APIMemoMask_CWallSegments | APIMemoMask_CWallFrames);
-                const API_Guid ownerCWSegment = cwMemo.cWallSegments[elem.cwPanel.segmentID].head.guid;
+                const bool hasOwnerMemo = ACAPI_Element_Get (&ownerCW) == NoError &&
+                    ACAPI_Element_GetMemo (ownerCW.header.guid, &cwMemo, APIMemoMask_CWallSegments | APIMemoMask_CWallFrames) == NoError &&
+                    cwMemo.cWallSegments != nullptr && elem.cwPanel.segmentID < ownerCW.curtainWall.nSegments &&
+                    (cwMemo.cWallFrames != nullptr || ownerCW.curtainWall.nFrames == 0);
 
+                // The frames of the panel are found through the grid mesh of its segment; without
+                // any of these memo parts the panel is reported without its polygon and frames.
                 API_ElementMemo cwSegmentMemo = {};
                 const GS::OnExit cwSegmentMemoGuard ([&cwSegmentMemo] () { ACAPI_DisposeElemMemoHdls (&cwSegmentMemo); });
-                ACAPI_Element_GetMemo(ownerCWSegment, &cwSegmentMemo, APIMemoMask_CWSegGridMesh);
-                const API_GridMesh& ownerGridMesh = *cwSegmentMemo.cWSegGridMesh;
-
                 API_ElementMemo cwPanelMemo = {};
                 const GS::OnExit cwPanelMemoGuard ([&cwPanelMemo] () { ACAPI_DisposeElemMemoHdls (&cwPanelMemo); });
-                ACAPI_Element_GetMemo(elem.header.guid, &cwPanelMemo, APIMemoMask_CWallPanels);
-                const GS::HashTable<API_Guid, GS::Array<API_GridElemID>>& cWallPanelGridIDTable = *cwPanelMemo.cWallPanelGridIDTable;
-
-                const GS::Array<API_GridElemID>& gridIDs = cWallPanelGridIDTable[elem.header.guid];
-                GS::Array<API_GridElemID> gridMeshPolygonIDs = gridIDs;
-                for (const API_GridElemID& polygonID : gridIDs) {
-                    const API_GridMeshPolygon& gridMeshPolygon = ownerGridMesh.meshPolygons[polygonID];
-                    gridMeshPolygonIDs.Append (gridMeshPolygon.neighbourIDs[API_GridMeshDirection::API_GridMeshRight]);
-                    gridMeshPolygonIDs.Append (gridMeshPolygon.neighbourIDs[API_GridMeshDirection::API_GridMeshUpper]);
-                }
-
-                const std::vector<API_Coord> panelSurfaceCoords = GetCWPanelSurfaceCoords (elem.header.guid);
+                const bool hasPanelGrid = hasOwnerMemo &&
+                    ACAPI_Element_GetMemo (cwMemo.cWallSegments[elem.cwPanel.segmentID].head.guid, &cwSegmentMemo, APIMemoMask_CWSegGridMesh) == NoError &&
+                    cwSegmentMemo.cWSegGridMesh != nullptr &&
+                    ACAPI_Element_GetMemo (elem.header.guid, &cwPanelMemo, APIMemoMask_CWallPanels) == NoError &&
+                    cwPanelMemo.cWallPanelGridIDTable != nullptr && cwPanelMemo.cWallPanelGridIDTable->ContainsKey (elem.header.guid);
 
                 std::vector<const API_CWFrameType*> framePtrs;
-                {
+                if (hasPanelGrid) {
+                    const API_GridMesh& ownerGridMesh = *cwSegmentMemo.cWSegGridMesh;
+                    const GS::Array<API_GridElemID>& gridIDs = (*cwPanelMemo.cWallPanelGridIDTable)[elem.header.guid];
+                    GS::Array<API_GridElemID> gridMeshPolygonIDs = gridIDs;
+                    for (const API_GridElemID& polygonID : gridIDs) {
+                        const API_GridMeshPolygon* gridMeshPolygon = ownerGridMesh.meshPolygons.GetPtr (polygonID);
+                        if (gridMeshPolygon == nullptr) {
+                            continue;
+                        }
+                        gridMeshPolygonIDs.Append (gridMeshPolygon->neighbourIDs[API_GridMeshDirection::API_GridMeshRight]);
+                        gridMeshPolygonIDs.Append (gridMeshPolygon->neighbourIDs[API_GridMeshDirection::API_GridMeshUpper]);
+                    }
+
+                    const std::vector<API_Coord> panelSurfaceCoords = GetCWPanelSurfaceCoords (elem.header.guid);
+
                     std::vector<const API_CWFrameType*> cornerFramesOfNextSegment;
                     for (UIndex i = 0; i < ownerCW.curtainWall.nFrames; ++i) {
                         const API_CWFrameType& frame = cwMemo.cWallFrames[i];
                         if (frame.segmentID == elem.cwPanel.segmentID) {
-                            if (gridMeshPolygonIDs.Contains (frame.cellID)) {
-                                for (GSIndex i = 0; i < panelSurfaceCoords.size () - 1; ++i) {
-                                    const API_Coord& c1 = panelSurfaceCoords[i];
-                                    const API_Coord& c2 = panelSurfaceCoords[i + 1];
+                            if (gridMeshPolygonIDs.Contains (frame.cellID) && ownerGridMesh.meshPolygons.ContainsKey (frame.cellID)) {
+                                for (size_t iCoord = 0; iCoord + 1 < panelSurfaceCoords.size (); ++iCoord) {
+                                    const API_Coord& c1 = panelSurfaceCoords[iCoord];
+                                    const API_Coord& c2 = panelSurfaceCoords[iCoord + 1];
                                     auto frameSurfaceCoords = GetFrameSurfaceParamCoords (frame, ownerGridMesh);
 
                                     if ((IsSame2DCoordinate (frameSurfaceCoords.first, c1) && IsSame2DCoordinate (frameSurfaceCoords.second, c2)) ||
@@ -2104,12 +2111,13 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
                     if (ACAPI_Element_GetMemo (elem.header.guid, &memo, APIMemoMask_MeshLevel) == NoError && memo.meshLevelCoords != nullptr && memo.meshLevelEnds != nullptr) {
                         const auto& sublines = typeSpecificDetails.AddList<GS::ObjectState> ("sublines");
                         const GSSize nSublines = BMhGetSize (reinterpret_cast<GSHandle> (memo.meshLevelEnds)) / sizeof (Int32);
+                        const GSSize nLevelCoords = BMhGetSize (reinterpret_cast<GSHandle> (memo.meshLevelCoords)) / sizeof (API_MeshLevelCoord);
                         Int32 iCoord = 0;
                         for (Int32 i = 0; i < nSublines; ++i) {
                             GS::ObjectState subline;
                             const auto& coordinates = subline.AddList<GS::ObjectState> ("coordinates");
 
-                            const Int32 nCoords = (*memo.meshLevelEnds)[i];
+                            const Int32 nCoords = static_cast<Int32> (std::min<GSSize> ((*memo.meshLevelEnds)[i], nLevelCoords));
                             for (; iCoord < nCoords; ++iCoord) {
                                 const API_MeshLevelCoord& coord = (*memo.meshLevelCoords)[iCoord];
                                 coordinates (Create3DCoordinateObjectState (coord.c));
