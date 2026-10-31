@@ -25,6 +25,9 @@ function (SetCompilerOptions target acVersion)
     target_compile_options (${target} PUBLIC "$<$<CONFIG:Debug>:-DDEBUG>")
     if (WIN32)
         target_compile_options (${target} PUBLIC /W4 /WX
+            # AddOnMain.cpp instantiates a wrapper class per command (ExceptionSafeCommand), more
+            # sections than an object file holds by default (C1128 in Debug builds).
+            /bigobj
             /Zc:wchar_t-
             /wd4499
             /EHsc
