@@ -197,6 +197,14 @@ GS::ObjectState Set3DProjectionSettingsCommand::Execute (const GS::ObjectState& 
         : CreateFailedExecutionResult (err, "Failed to set the 3D projection settings.");
 }
 
+// There is deliberately no command that sets the current 3D style. ACAPI_View_SetCurrent3DStyle
+// starts an Archicad command of its own (Activate3DWindowStyle -> ProjectControl::ExecuteCommand),
+// whose ODB modification scope must be the outermost one, but the API already runs the call in a
+// command. Archicad 29 asserts ("can't open modification scope inside transaction") and can crash;
+// Archicad 30 returns NoError and keeps the old style. Tested in Archicad 30 from an add-on command
+// (directly, in ACAPI_CallUndoableCommand, in ACAPI_CallCommand) and from Archicad's event loop
+// (ACAPI_AddOnAddOnCommunication_CallFromEventLoop), also right after ACAPI_View_Create3DStyle as in
+// the DevKit's Environment_Control example: the current style never changed.
 Get3DStylesCommand::Get3DStylesCommand () :
     CommandBase (CommonSchema::NotUsed)
 {}
