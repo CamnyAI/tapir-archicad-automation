@@ -1947,8 +1947,22 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
                     for (Int32 i = 0; i < nPoints; ++i) {
                         coords (Create2DCoordinateObjectState ((*splineMemo.coords)[i]));
                     }
+                    // The handles, in the format ModifySplines takes them, when the curve has its own.
+                    if (!elem.spline.autoSmooth && splineMemo.bezierDirs != nullptr &&
+                        BMGetHandleSize (reinterpret_cast<GSHandle> (splineMemo.bezierDirs)) / (GSSize) sizeof (API_SplineDir) >= nPoints) {
+                        const auto& dirs = typeSpecificDetails.AddList<GS::ObjectState> ("bezierDirections");
+                        for (Int32 i = 0; i < nPoints; ++i) {
+                            const API_SplineDir& dir = (*splineMemo.bezierDirs)[i];
+                            GS::ObjectState dirOS;
+                            dirOS.Add ("lenPrev", dir.lenPrev);
+                            dirOS.Add ("lenNext", dir.lenNext);
+                            dirOS.Add ("dirAng", dir.dirAng);
+                            dirs (dirOS);
+                        }
+                    }
                 }
                 ACAPI_DisposeElemMemoHdls (&splineMemo);
+                typeSpecificDetails.Add ("autoSmooth", elem.spline.autoSmooth);
                 typeSpecificDetails.Add ("closed", elem.spline.closed);
                 AddLineFamilySettingsDetails (typeSpecificDetails, elem.spline.linePen, elem.spline.ltypeInd, elem.spline.roomSeparator);
                 typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));

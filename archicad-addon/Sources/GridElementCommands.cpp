@@ -628,3 +628,247 @@ GS::ObjectState CreateGridElementsCommand::Execute (const GS::ObjectState& param
     }
     return response;
 }
+
+// ---------------------------------------------------------------------------
+// ModifyGridElements
+// ---------------------------------------------------------------------------
+
+ModifyGridElementsCommand::ModifyGridElementsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String ModifyGridElementsCommand::GetName () const
+{
+    return "ModifyGridElements";
+}
+
+GS::Optional<GS::UniString> ModifyGridElementsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "gridElementsWithDetails": {
+                "type": "array",
+                "description": "The grid elements to modify, each with the fields to change, the ones CreateGridElements takes. Only the given fields are changed. The elements keep their GUIDs.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "elementId": { "$ref": "#/ElementId" },
+                        "begCoordinate": { "$ref": "#/Coordinate2D", "description": "New start point of the grid line (the object's insertion point). When omitted the start point stays where it is." },
+                        "endCoordinate": { "$ref": "#/Coordinate2D", "description": "New end point of the grid line. When omitted the end point stays where it is: the end of the current line, from its angle and length." },
+                        "lengthMode": { "type": "string", "enum": ["length", "none"], "description": "How a new line length is applied when begCoordinate or endCoordinate is given, as in CreateGridElements. length (default): to the GDL parameter AC_Length when the library part has it, otherwise to the object's A size. none: only the start point and the direction change; the length is left to 'parameters'." },
+                        "floorIndex": { "type": "integer", "description": "Moves the grid element to this story." },
+                        "layerIndex": { "type": "integer", "description": "Moves the grid element to this layer (layer attribute index). The layer must exist and must not be locked." },
+                        "parameters": {
+                            "type": "array",
+                            "description": "GDL parameters to set by name, as in CreateGridElements: for example the grid label. Read the names with GetGridElements (includeParameters). Unknown names and wrong value types are reported in warnings and skipped.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "value": { "description": "A number or a boolean for a numeric parameter, a string for a String or Title parameter." }
+                                },
+                                "additionalProperties": false,
+                                "required": ["name", "value"]
+                            }
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["elementId"]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["gridElementsWithDetails"]
+    })";
+}
+
+GS::Optional<GS::UniString> ModifyGridElementsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "executionResults": { "$ref": "#/ExecutionResults" },
+            "warnings": { "type": "array", "items": { "type": "string" }, "description": "Parameters that were not set, prefixed with the index of the grid element." }
+        },
+        "additionalProperties": false,
+        "required": ["executionResults", "warnings"]
+    })";
+}
+
+GS::ObjectState ModifyGridElementsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    GS::Array<GS::ObjectState> items;
+    parameters.Get ("gridElementsWithDetails", items);
+
+    GS::ObjectState response;
+    const auto& executionResults = response.AddList<GS::ObjectState> ("executionResults");
+    GS::Array<GS::UniString> warnings;
+
+#ifdef ServerMainVers_2600
+    const Stories stories = GetStories ();
+    ACAPI_CallUndoableCommand ("Modify Grid Elements", [&] () -> GSErrCode {
+        UIndex itemIndex = 0;
+        for (const GS::ObjectState& item : items) {
+            const GS::UniString prefix = GS::UniString::Printf ("item %u: ", (unsigned) itemIndex++);
+
+            const GS::ObjectState* elementId = item.Get ("elementId");
+            if (elementId == nullptr) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "elementId is missing."));
+                continue;
+            }
+            API_Element element = {};
+            element.header.guid = GetGuidFromObjectState (*elementId);
+            GSErrCode err = ACAPI_Element_Get (&element);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to find the element."));
+                continue;
+            }
+            if (element.header.type.typeID != API_ObjectID || element.header.type.variationID != APIVarId_GridElement) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADID, "The element is not a grid element."));
+                continue;
+            }
+
+            API_ElementMemo memo = {};
+            const GS::OnExit guard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+            err = ACAPI_Element_GetMemo (element.header.guid, &memo, APIMemoMask_AddPars);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to read the parameters of the grid element."));
+                continue;
+            }
+
+            API_Element mask = {};
+            ACAPI_ELEMENT_MASK_CLEAR (mask);
+            bool changed = false;
+            bool paramsChanged = false;
+            bool sizeChanged = false;
+
+            const GS::ObjectState* begOS = item.Get ("begCoordinate");
+            const GS::ObjectState* endOS = item.Get ("endCoordinate");
+            if (begOS != nullptr || endOS != nullptr) {
+                // A point that is not given stays where it is: the end point of the current line
+                // is its start point moved by its length in its direction.
+                const double currentLength = GridLength (element, memo.params);
+                const API_Coord currentBeg = element.object.pos;
+                const API_Coord currentEnd = { currentBeg.x + currentLength * std::cos (element.object.angle),
+                                               currentBeg.y + currentLength * std::sin (element.object.angle) };
+                const API_Coord beg = begOS != nullptr ? Get2DCoordinateFromObjectState (*begOS) : currentBeg;
+                const API_Coord end = endOS != nullptr ? Get2DCoordinateFromObjectState (*endOS) : currentEnd;
+                const double dx = end.x - beg.x;
+                const double dy = end.y - beg.y;
+                const double length = std::sqrt (dx * dx + dy * dy);
+                if (length < 1e-6) {
+                    executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "The start and end points of the grid line would be the same."));
+                    continue;
+                }
+                element.object.pos = beg;
+                element.object.angle = std::atan2 (dy, dx);
+                ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, pos);
+                ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, angle);
+                changed = true;
+
+                GS::UniString lengthMode = "length";
+                item.Get ("lengthMode", lengthMode);
+                if (lengthMode == "length") {
+                    if (SetNumericParameter (memo.params, "AC_Length", length)) {
+                        paramsChanged = true;
+                    } else if (SetNumericParameter (memo.params, "A", length)) {
+                        paramsChanged = true;
+                        sizeChanged = true;
+                    }
+                }
+            }
+
+            Int32 floorIndex = 0;
+            if (item.Get ("floorIndex", floorIndex)) {
+                if (stories.find ((short) floorIndex) == stories.end ()) {
+                    executionResults (CreateFailedExecutionResult (APIERR_BADINDEX, "floorIndex does not refer to an existing story."));
+                    continue;
+                }
+                element.header.floorInd = (short) floorIndex;
+                ACAPI_ELEMENT_MASK_SET (mask, API_Elem_Head, floorInd);
+                changed = true;
+            }
+
+            Int32 layerIndex = 0;
+            if (item.Get ("layerIndex", layerIndex)) {
+                API_Attribute layer = {};
+                layer.header.typeID = API_LayerID;
+                layer.header.index = ACAPI_CreateAttributeIndex (layerIndex);
+                if (layerIndex <= 0 || ACAPI_Attribute_Get (&layer) != NoError) {
+                    executionResults (CreateFailedExecutionResult (APIERR_BADINDEX, "layerIndex does not refer to an existing layer."));
+                    continue;
+                }
+                if ((layer.header.flags & APILay_Locked) != 0) {
+                    executionResults (CreateFailedExecutionResult (APIERR_LOCKEDLAY, "The layer given by layerIndex is locked."));
+                    continue;
+                }
+                element.header.layer = layer.header.index;
+                ACAPI_ELEMENT_MASK_SET (mask, API_Elem_Head, layer);
+                changed = true;
+            }
+
+            GS::Array<GS::ObjectState> params;
+            if (item.Get ("parameters", params)) {
+                GS::Array<GS::UniString> itemWarnings;
+                for (const GS::ObjectState& p : params) {
+                    GS::UniString name;
+                    p.Get ("name", name);
+                    if (ApplyParameter (memo.params, p, itemWarnings)) {
+                        paramsChanged = true;
+                        if (name == "A" || name == "B") {
+                            sizeChanged = true;
+                        }
+                    }
+                }
+                for (const GS::UniString& w : itemWarnings) {
+                    warnings.Push (prefix + w);
+                }
+            }
+
+            // As in CreateGridElements: xRatio and yRatio have to agree with A and B.
+            if (sizeChanged) {
+                double libraryPartA = 1.0;
+                double libraryPartB = 1.0;
+                if (!element.object.useXYFixSize) {
+                    err = GetLibraryPartOwnSize ((Int32) element.object.libInd, libraryPartA, libraryPartB);
+                    if (err != NoError) {
+                        executionResults (CreateFailedExecutionResult (err, "Failed to read the library part's own A and B."));
+                        continue;
+                    }
+                }
+                double a = 0.0;
+                double b = 0.0;
+                if (GetNumericParameter (memo.params, "A", a)) {
+                    element.object.xRatio = a / libraryPartA;
+                    ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, xRatio);
+                }
+                if (GetNumericParameter (memo.params, "B", b)) {
+                    element.object.yRatio = b / libraryPartB;
+                    ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, yRatio);
+                }
+            }
+
+            if (!changed && !paramsChanged) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "No fields to modify were given."));
+                continue;
+            }
+
+            err = ACAPI_Element_Change (&element, &mask, paramsChanged ? &memo : nullptr, paramsChanged ? APIMemoMask_AddPars : 0, true);
+            executionResults (err == NoError ? CreateSuccessfulExecutionResult () : CreateFailedExecutionResult (err, "Failed to modify the grid element."));
+        }
+        return NoError;
+    });
+#else
+    for (UIndex ii = 0; ii < items.GetSize (); ++ii) {
+        executionResults (CreateFailedExecutionResult (APIERR_NOTSUPPORTED, "Grid Element commands need Archicad 26 or later."));
+    }
+#endif
+
+    const auto& warningList = response.AddList<GS::UniString> ("warnings");
+    for (const GS::UniString& w : warnings) {
+        warningList (w);
+    }
+    return response;
+}

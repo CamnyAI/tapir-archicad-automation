@@ -29,6 +29,7 @@
 #include "ElementCategoryCommands.hpp"
 #include "ElementGDLParameterCommands.hpp"
 #include "ElementCreationCommands.hpp"
+#include "ElementModificationCommands.hpp"
 #include "ExtendedElementCommands.hpp"
 #include "AdditionalElementCreationCommands.hpp"
 #include "Model3DCommands.hpp"
@@ -992,6 +993,10 @@ GSErrCode Initialize (void)
             elementCommands, "1.7.2",
             "Creates grid elements, the elements the Grid Tool places, from begin and end coordinates, with optional story, layer and GDL parameters. Needs Archicad 26 or later."
         );
+        err |= RegisterCommand<ModifyGridElementsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies grid elements in place: their begin and end coordinates, story, layer and GDL parameters (for example the label), the keys CreateGridElements takes. The elements keep their GUIDs. Needs Archicad 26 or later."
+        );
         err |= RegisterCommand<CreateMeshesCommand> (
             elementCommands, "1.1.9",
             "Creates Mesh elements based on the given parameters."
@@ -1111,6 +1116,38 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<ModifyCurtainWallsCommand> (
             elementCommands, "1.7.4",
             "Modifies Curtain Wall elements in place, keeping their GUID, properties and classifications: the height, the bottom elevation and story, the reference line (with the same number of segments), and the column (primary) and row (secondary) pattern with its cell assignments, in the fields of CreateCurtainWalls."
+        );
+        err |= RegisterCommand<ModifyLinesCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Line elements in place: their end points, pen, line type, zone boundary flag and layer. The elements keep their GUIDs, and with them their links, properties and classifications. Takes the keys of CreateLineElements."
+        );
+        err |= RegisterCommand<ModifyArcsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Arc and Circle elements in place: their center, radius, begin and end angles, ellipse shape, pen, line type, zone boundary flag and layer. The elements keep their GUIDs. Takes the keys of CreateArcs."
+        );
+        err |= RegisterCommand<ModifyCirclesCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Circle elements, and the whole-circle arcs CreateCircles makes, in place: their center, radius, ellipse shape, pen, line type, zone boundary flag and layer. The elements keep their GUIDs. Takes the keys of CreateCircles."
+        );
+        err |= RegisterCommand<ModifyPolylinesCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Polyline elements in place: their points and arcs, pen, line type, pen weight, zone boundary flag and layer. The elements keep their GUIDs. Takes the keys of CreatePolylines."
+        );
+        err |= RegisterCommand<ModifySplinesCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Spline elements in place: their points, Bezier handles and closed flag, pen, line type, zone boundary flag and layer. The elements keep their GUIDs. Takes the keys of CreateSplines; GetDetailsOfElements returns the handles."
+        );
+        err |= RegisterCommand<ModifyDimensionsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies linear Dimension elements in place: their dimension line, appearance (type, line pen, markers, witness lines), text settings (height, pen, font, frame, position) and layer, for every witness point. The witness points themselves cannot be replaced. The elements keep their GUIDs. GetDimensionData returns these settings in the same format."
+        );
+        err |= RegisterCommand<ModifyRailingsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Railing elements in place: their base offset, height of every segment or of each one, story, layer and id. The elements keep their GUIDs. Takes the keys of CreateRailings except the reference line, which Archicad does not change through the API."
+        );
+        err |= RegisterCommand<ModifyStairsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Stair elements in place: their total height, number and height of risers, flight width, base elevation, layer and id, with the stair rules of the project applied as in the Stair Settings. The elements keep their GUIDs. Takes the keys of CreateStairs except the baseline, the story, treadDepth and finishVisible, which Archicad does not change through the API."
         );
         err |= RegisterCommand<ChangeTextContentCommand> (
             elementCommands, "1.7.3",

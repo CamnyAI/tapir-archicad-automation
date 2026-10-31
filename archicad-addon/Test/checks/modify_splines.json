@@ -1,0 +1,46 @@
+{
+  "title": "ModifySplines changes the points, the Bezier handles and the closed flag of a spline in place",
+  "minTapir": "1.7.4",
+  "steps": [
+    {"id": "spline", "command": "CreateSplines",
+     "params": {"splinesData": [{"coordinates": [{"x": 930, "y": 920}, {"x": 933, "y": 922}, {"x": 936, "y": 920}, {"x": 939, "y": 923}]}]},
+     "save": {"spline": "elements[0].elementId.guid"}},
+
+    {"id": "new points", "command": "ModifySplines", "creates": false,
+     "params": {"splinesWithDetails": [{"elementId": {"guid": "${spline}"}, "coordinates": [{"x": 930, "y": 930}, {"x": 934, "y": 933}, {"x": 938, "y": 930}], "linePenIndex": 9}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "the same spline, new points", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${spline}"}}]},
+     "expect": [{"path": "detailsOfElements[0].type", "eq": "Spline"},
+                {"path": "detailsOfElements[0].details.coordinates", "len": 3},
+                {"path": "detailsOfElements[0].details.coordinates[1].x", "approx": 934},
+                {"path": "detailsOfElements[0].details.coordinates[1].y", "approx": 933},
+                {"path": "detailsOfElements[0].details.autoSmooth", "eq": true},
+                {"path": "detailsOfElements[0].details.linePenIndex", "eq": 9}]},
+
+    {"id": "handles", "command": "ModifySplines", "creates": false,
+     "params": {"splinesWithDetails": [{"elementId": {"guid": "${spline}"}, "bezierDirections": [
+         {"lenPrev": 1, "lenNext": 1.5, "dirAng": 0.25}, {"lenPrev": 0.5, "lenNext": 0.75, "dirAng": 1.25}, {"lenPrev": 2, "lenNext": 1, "dirAng": -0.5}]}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "the handles are read back", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${spline}"}}]},
+     "expect": [{"path": "detailsOfElements[0].details.autoSmooth", "eq": false},
+                {"path": "detailsOfElements[0].details.coordinates[1].x", "approx": 934, "name": "the points stay"},
+                {"path": "detailsOfElements[0].details.bezierDirections", "len": 3},
+                {"path": "detailsOfElements[0].details.bezierDirections[0].lenNext", "approx": 1.5},
+                {"path": "detailsOfElements[0].details.bezierDirections[1].dirAng", "approx": 1.25},
+                {"path": "detailsOfElements[0].details.bezierDirections[2].lenPrev", "approx": 2}]},
+
+    {"id": "closed", "command": "ModifySplines", "creates": false,
+     "params": {"splinesWithDetails": [{"elementId": {"guid": "${spline}"}, "closed": true}]},
+     "expect": [{"path": "executionResults[0].success", "eq": true}]},
+    {"id": "closed, with its handles", "command": "GetDetailsOfElements", "creates": false,
+     "params": {"elements": [{"elementId": {"guid": "${spline}"}}]},
+     "expect": [{"path": "detailsOfElements[0].details.closed", "eq": true},
+                {"path": "detailsOfElements[0].details.bezierDirections[1].dirAng", "approx": 1.25}]},
+
+    {"id": "one handle too few", "command": "ModifySplines", "creates": false,
+     "params": {"splinesWithDetails": [{"elementId": {"guid": "${spline}"}, "bezierDirections": [{"lenPrev": 1, "lenNext": 1, "dirAng": 0}, {"lenPrev": 1, "lenNext": 1, "dirAng": 0}]}]},
+     "expect": [{"path": "executionResults[0].success", "eq": false}]}
+  ]
+}
