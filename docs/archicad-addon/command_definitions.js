@@ -16695,7 +16695,7 @@ var gCommands = [{
                         },
                         "elementType": {
                             "$ref": "#/ElementType",
-                            "description": "The element type of the Favorite. Missing when Archicad cannot read the Favorite's element settings."
+                            "description": "The element type of the Favorite. Missing for the external element types, which have no name in ElementType: those of the analytical model (supports, links, loads) and of MEP elements."
                         }
                     },
                     "additionalProperties": false,
