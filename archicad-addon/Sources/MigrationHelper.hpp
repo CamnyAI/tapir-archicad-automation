@@ -531,6 +531,11 @@ inline GSErrCode ACAPI_CurtainWall_GetCWHeight (const API_Guid* guid, double* he
     return ACAPI_Goodies (APIAny_GetCWHeightID, (void*) guid, height);
 }
 
+inline GSErrCode ACAPI_CurtainWall_GetCWAbsoluteBottom (const API_Guid* guid, double* bottom)
+{
+    return ACAPI_Goodies (APIAny_GetCWAbsoluteBottomID, (void*) guid, bottom);
+}
+
 inline GSErrCode ACAPI_LibraryManagement_GetLibraries (GS::Array<API_LibraryInfo>* activeLibs, Int32* embeddedLibraryIndex = nullptr)
 {
     return ACAPI_Environment (APIEnv_GetLibrariesID, activeLibs, embeddedLibraryIndex);

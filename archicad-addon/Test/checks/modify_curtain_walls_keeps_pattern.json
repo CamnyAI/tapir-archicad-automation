@@ -1,0 +1,340 @@
+{
+  "title": "ModifyCurtainWalls keeps the column pattern when the height or the reference line changes",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "create a 6 m curtain wall, 3 m high, 1 m columns and rows",
+      "command": "CreateCurtainWalls",
+      "params": {
+        "curtainWallsData": [
+          {
+            "coordinates": [
+              {
+                "x": 920,
+                "y": 900
+              },
+              {
+                "x": 926,
+                "y": 900
+              }
+            ],
+            "zCoordinate": 0,
+            "floorIndex": 0,
+            "height": 3.0,
+            "primaryPattern": {
+              "logic": "FixedSizes",
+              "sizes": [
+                1.0
+              ]
+            },
+            "secondaryPattern": {
+              "logic": "FixedSizes",
+              "sizes": [
+                1.0
+              ]
+            }
+          }
+        ]
+      },
+      "save": {
+        "cw": "elements[0].elementId.guid"
+      },
+      "expect": [
+        {
+          "path": "elements[0].elementId.guid",
+          "exists": true,
+          "name": "created"
+        }
+      ]
+    },
+    {
+      "id": "2 m columns",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "primaryPattern": {
+              "logic": "FixedSizes",
+              "sizes": [
+                2.0
+              ]
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": true,
+          "name": "succeeds"
+        }
+      ]
+    },
+    {
+      "id": "3 x 3 panels",
+      "command": "GetSubelementsOfHierarchicalElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "subelements[0].cWallPanels",
+          "len": 9,
+          "name": "9 panels: 3 columns x 3 rows"
+        }
+      ]
+    },
+    {
+      "id": "height 4 m",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "height": 4.0
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": true,
+          "name": "succeeds"
+        }
+      ]
+    },
+    {
+      "id": "3 x 4 panels",
+      "command": "GetSubelementsOfHierarchicalElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "subelements[0].cWallPanels",
+          "len": 12,
+          "name": "12 panels: still 2 m columns, 4 rows"
+        }
+      ]
+    },
+    {
+      "id": "reference line 8 m",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "coordinates": [
+              {
+                "x": 920,
+                "y": 902
+              },
+              {
+                "x": 928,
+                "y": 902
+              }
+            ]
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": true,
+          "name": "succeeds"
+        }
+      ]
+    },
+    {
+      "id": "box after the move",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "zMin1": "boundingBoxes3D[0].boundingBox3D.zMin",
+        "zMax1": "boundingBoxes3D[0].boundingBox3D.zMax",
+        "xMin1": "boundingBoxes3D[0].boundingBox3D.xMin",
+        "xMax1": "boundingBoxes3D[0].boundingBox3D.xMax"
+      }
+    },
+    {
+      "id": "moved read back",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "expr": "${zMax1} - ${zMin1}",
+          "approx": 4.0,
+          "tol": 0.01,
+          "name": "still 4 m high"
+        },
+        {
+          "path": "detailsOfElements[0].details.actualHeight",
+          "approx": 4.0,
+          "tol": 0.001,
+          "name": "actualHeight is 4 m"
+        }
+      ]
+    },
+    {
+      "id": "4 x 4 panels",
+      "command": "GetSubelementsOfHierarchicalElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "subelements[0].cWallPanels",
+          "len": 16,
+          "name": "16 panels: 2 m columns along 8 m"
+        }
+      ]
+    },
+    {
+      "id": "height, bottom and rows in one item",
+      "command": "ModifyCurtainWalls",
+      "creates": false,
+      "params": {
+        "curtainWallsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            },
+            "height": 3.0,
+            "zCoordinate": 0.5,
+            "secondaryPattern": {
+              "logic": "FixedSizes",
+              "sizes": [
+                1.5
+              ]
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResults[0].success",
+          "eq": true,
+          "name": "succeeds"
+        }
+      ]
+    },
+    {
+      "id": "box after the combined change",
+      "command": "Get3DBoundingBoxes",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "save": {
+        "zMin2": "boundingBoxes3D[0].boundingBox3D.zMin",
+        "zMax2": "boundingBoxes3D[0].boundingBox3D.zMax",
+        "xMin2": "boundingBoxes3D[0].boundingBox3D.xMin",
+        "xMax2": "boundingBoxes3D[0].boundingBox3D.xMax"
+      }
+    },
+    {
+      "id": "combined read back",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "expr": "${zMax2} - ${zMin2}",
+          "approx": 3.0,
+          "tol": 0.01,
+          "name": "3 m high"
+        },
+        {
+          "expr": "${zMin2} - ${zMin1}",
+          "approx": 0.5,
+          "tol": 0.001,
+          "name": "bottom raised by 0.5 m"
+        }
+      ]
+    },
+    {
+      "id": "4 x 2 panels",
+      "command": "GetSubelementsOfHierarchicalElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${cw}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "subelements[0].cWallPanels",
+          "len": 8,
+          "name": "8 panels: 2 m columns, 1.5 m rows"
+        }
+      ]
+    }
+  ]
+}

@@ -24,8 +24,10 @@
 #include <cstddef>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -7431,6 +7433,490 @@ GS::ObjectState ModifySlabsCommand::Execute (const GS::ObjectState& parameters, 
 
             err = ACAPI_Element_Change (&element, &mask, nullptr, 0, true);
             results.Push (err == NoError ? CreateSuccessfulExecutionResult () : CreateFailedExecutionResult (err, "Failed to modify slab."));
+        }
+    });
+}
+
+ModifyCurtainWallsCommand::ModifyCurtainWallsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String ModifyCurtainWallsCommand::GetName () const
+{
+    return "ModifyCurtainWalls";
+}
+
+GS::Optional<GS::UniString> ModifyCurtainWallsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "curtainWallsWithDetails": {
+                "type": "array",
+                "description": "Array of Curtain Wall elements to modify, with the fields to change. Only the given fields are changed. The fields are those of CreateCurtainWalls, so a curtain wall can be changed in place instead of being deleted and recreated, keeping its GUID, properties and classifications. Every change is read back from what Archicad built (the height and bottom from the curtain wall's geometry); a change Archicad did not apply fails the item.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "elementId": { "$ref": "#/ElementId" },
+                        "coordinates": {
+                            "type": "array",
+                            "description": "The new 2D coordinates of the reference line of the curtain wall on the floor plan. Each pair of consecutive coordinates is one straight segment, so the number of coordinates must be the current number of segments plus one: the segments can be moved and resized, but not added or removed (a curved segment becomes straight). The segments are built again along the new line (as new sub-elements, with new frames and panels); each keeps its pattern and cell assignments.",
+                            "items": {
+                                "$ref": "#/Coordinate2D"
+                            },
+                            "minItems": 2
+                        },
+                        "zCoordinate": {
+                            "type": "number",
+                            "description": "The new Z coordinate (absolute elevation) of the bottom of the curtain wall. The home story is derived from it unless floorIndex is given too."
+                        },
+                        "floorIndex": {
+                            "type": "integer",
+                            "description": "The new home story index, which must be a story of the project. On its own it moves the curtain wall to that story, keeping its bottom offset from the story; with zCoordinate it pins the story the bottom elevation is measured from."
+                        },
+                        "height": {
+                            "type": "number",
+                            "description": "The new height of the curtain wall. Archicad uses the height when it builds the segments from the reference line, so the segments are built again at the new height (as new sub-elements, with frames and panels filling the new height); each keeps its pattern and cell assignments.",
+                            "exclusiveMinimum": 0.0
+                        },
+                        "primaryPattern": {
+                            "$ref": "#/CurtainWallPattern",
+                            "description": "The new column pattern: the sizes of the columns along the segments (the primary grid). Set as the pattern of the curtain wall, which every segment takes over, so that a later new height or reference line keeps it; the frames and panels are regenerated from it."
+                        },
+                        "secondaryPattern": {
+                            "$ref": "#/CurtainWallPattern",
+                            "description": "The new row pattern: the sizes of the rows from the bottom up (the secondary grid). Set as the pattern of the curtain wall, which every segment takes over, so that a later new height or reference line keeps it; the frames and panels are regenerated from it."
+                        },
+                        "cells": {
+                            "type": "array",
+                            "description": "Assignment of panel and frame classes to the cells of the pattern unit, as in CreateCurtainWalls, set for the curtain wall and every segment like the patterns. Without a pattern change, a cell not listed here keeps the curtain wall's current assignment; with one, it takes the assignment of the curtain wall's first current cell. Invalid cells fail the item before anything is changed.",
+                            "items": {
+                                "$ref": "#/CurtainWallPatternCell"
+                            }
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["elementId"]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["curtainWallsWithDetails"]
+    })";
+}
+
+GS::Optional<GS::UniString> ModifyCurtainWallsCommand::GetRawResponseSchema () const
+{
+    return ModifyWallsCommand ().GetRawResponseSchema ();
+}
+
+namespace {
+
+// The scheme of a curtain wall segment: its column (primary) and row (secondary) pattern and the
+// cell assignments of its pattern unit. The owner curtain wall holds the default scheme of its
+// segments in the same memo fields (ACAPI_Element_GetMemo in ACAPinc.h: "cWSegPrimaryPattern,
+// cWSegSecondaryPattern and cWSegPatternCells members will contain the default segment scheme of
+// the curtain wall").
+constexpr UInt64 CurtainWallSchemeMemoMask = APIMemoMask_CWSegPrimaryPattern | APIMemoMask_CWSegSecPattern | APIMemoMask_CWSegPanelPattern;
+
+bool IsSameCurtainWallPattern (const API_CWSegmentPatternData& expected, const API_CWSegmentPatternData& actual)
+{
+    if (expected.nPattern != actual.nPattern || expected.logic != actual.logic || expected.gridOriginType != actual.gridOriginType) {
+        return false;
+    }
+    if (expected.nPattern > 0 && (expected.pattern == nullptr || actual.pattern == nullptr)) {
+        return false;
+    }
+    for (UInt32 i = 0; i < expected.nPattern; ++i) {
+        if (std::fabs (expected.pattern[i] - actual.pattern[i]) > 1e-6) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The cells of the pattern unit (nColumns x nRows of the expected memo's patterns).
+bool IsSameCurtainWallPatternCells (const API_ElementMemo& expected, const API_ElementMemo& actual)
+{
+    const UInt32 nCells = expected.cWSegPrimaryPattern.nPattern * expected.cWSegSecondaryPattern.nPattern;
+    if (nCells == 0) {
+        return true;
+    }
+    if (expected.cWSegPatternCells == nullptr || actual.cWSegPatternCells == nullptr ||
+        BMpGetSize (reinterpret_cast<GSPtr> (actual.cWSegPatternCells)) < static_cast<GSSize> (nCells * sizeof (API_CWSegmentPatternCellData))) {
+        return false;
+    }
+    for (UInt32 i = 0; i < nCells; ++i) {
+        const API_CWSegmentPatternCellData& e = expected.cWSegPatternCells[i];
+        const API_CWSegmentPatternCellData& a = actual.cWSegPatternCells[i];
+        if (e.crossingFrameType != a.crossingFrameType || e.leftPanelID != a.leftPanelID || e.rightPanelID != a.rightPanelID ||
+            e.leftFrameID != a.leftFrameID || e.bottomFrameID != a.bottomFrameID || e.crossingFrameID != a.crossingFrameID) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The memo handles of one scheme, disposed with it.
+class CurtainWallScheme
+{
+public:
+    CurtainWallScheme () = default;
+    ~CurtainWallScheme () { ACAPI_DisposeElemMemoHdls (&memo); }
+    CurtainWallScheme (const CurtainWallScheme&) = delete;
+    CurtainWallScheme& operator= (const CurtainWallScheme&) = delete;
+
+    GSErrCode Load (const API_Guid& guid)
+    {
+        ACAPI_DisposeElemMemoHdls (&memo);
+        memo = {};
+        return ACAPI_Element_GetMemo (guid, &memo, CurtainWallSchemeMemoMask);
+    }
+
+    bool IsSameAs (const API_ElementMemo& expected) const
+    {
+        return IsSameCurtainWallPattern (expected.cWSegPrimaryPattern, memo.cWSegPrimaryPattern) &&
+            IsSameCurtainWallPattern (expected.cWSegSecondaryPattern, memo.cWSegSecondaryPattern) &&
+            IsSameCurtainWallPatternCells (expected, memo);
+    }
+
+    API_ElementMemo memo {};
+};
+
+bool HasCurtainWallScheme (const API_Guid& guid, const API_ElementMemo& expected)
+{
+    CurtainWallScheme actual;
+    return actual.Load (guid) == NoError && actual.IsSameAs (expected);
+}
+
+// Writes the scheme to a curtain wall or to one of its segments, then reads it back: Archicad
+// answering NoError while leaving the scheme as it was is reported as a failure, not as a success.
+GS::Optional<GS::ObjectState> SetCurtainWallScheme (const API_Guid& guid, const API_ElementMemo& scheme, const GS::UniString& what, const GS::UniString& notAppliedMessage)
+{
+    API_Element element = {};
+    element.header.guid = guid;
+    GSErrCode err = ACAPI_Element_Get (&element);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to load " + what + ".");
+    }
+    API_Element mask = {};
+    ACAPI_ELEMENT_MASK_CLEAR (mask);
+    err = ACAPI_Element_Change (&element, &mask, &scheme, CurtainWallSchemeMemoMask, true);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to modify the pattern of " + what + ".");
+    }
+    if (!HasCurtainWallScheme (guid, scheme)) {
+        return CreateFailedExecutionResult (APIERR_GENERAL, notAppliedMessage);
+    }
+    return {};
+}
+
+GSErrCode GetCurtainWallSegmentGuids (const API_Element& curtainWall, GS::Array<API_Guid>& segmentGuids)
+{
+    API_ElementMemo memo = {};
+    const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+    const GSErrCode err = ACAPI_Element_GetMemo (curtainWall.header.guid, &memo, APIMemoMask_CWallSegments);
+    if (err != NoError) {
+        return err;
+    }
+    if (memo.cWallSegments == nullptr) {
+        return APIERR_GENERAL;
+    }
+    const UInt32 nSegments = GS::Min (curtainWall.curtainWall.nSegments, static_cast<UInt32> (BMpGetSize (reinterpret_cast<GSPtr> (memo.cWallSegments)) / sizeof (API_CWSegmentType)));
+    for (UInt32 i = 0; i < nSegments; ++i) {
+        segmentGuids.Push (memo.cWallSegments[i].head.guid);
+    }
+    return segmentGuids.IsEmpty () ? APIERR_GENERAL : NoError;
+}
+
+GS::ObjectState ModifyCurtainWall (const GS::ObjectState& item, const Stories& stories)
+{
+    if (item.Get ("elementId") == nullptr) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "Missing required 'elementId' field.");
+    }
+    API_Element element = {};
+    element.header.guid = GetGuidFromObjectState (*item.Get ("elementId"));
+    GSErrCode err = ACAPI_Element_Get (&element);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to load curtain wall.");
+    }
+    if (GetElemTypeId (element.header) != API_CurtainWallID) {
+        return CreateFailedExecutionResult (APIERR_BADID, "Element is not a Curtain Wall.");
+    }
+
+    API_Element mask = {};
+    ACAPI_ELEMENT_MASK_CLEAR (mask);
+    bool changed = false;
+
+    // API_CurtainWallType.height is "input only" (APIdefs_Elements.h): Archicad reads it when it
+    // builds the segments of the curtain wall from its reference line. ACAPI_Element_Change does
+    // that only when the reference line (memo.coords, APIMemoMask_Polygon) comes with the change;
+    // with the height alone it answers NoError and keeps the old segments and their height
+    // (confirmed live in Archicad 30). So a new height always sends the reference line too: the
+    // current one, or the new coordinates when they are given.
+    double height = 0.0;
+    const bool heightGiven = item.Get ("height", height);
+    if (heightGiven) {
+        if (height <= 0.0) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, "height must be positive.");
+        }
+        element.curtainWall.height = height;
+        ACAPI_ELEMENT_MASK_SET (mask, API_CurtainWallType, height);
+        changed = true;
+    }
+
+    // The bottom of the curtain wall, as CreateCurtainWalls places it: planeOffset and
+    // storyRelLevel both hold the offset from the home story. It is read back with
+    // ACAPI_CurtainWall_GetCWAbsoluteBottom, which (despite its name) is relative to the home
+    // story; floorIndex alone keeps that offset.
+    double zCoordinate = 0.0;
+    short floorIndex = 0;
+    const bool zCoordinateGiven = item.Get ("zCoordinate", zCoordinate);
+    const bool floorIndexGiven = item.Get ("floorIndex", floorIndex);
+    if (floorIndexGiven && stories.find (floorIndex) == stories.end ()) {
+        // Archicad moves the element to the nearest story instead (confirmed live).
+        return CreateFailedExecutionResult (APIERR_BADPARS, GS::UniString::Printf ("floorIndex %d is not a story of the project.", static_cast<int> (floorIndex)));
+    }
+    double expectedBottom = 0.0;
+    if (ACAPI_CurtainWall_GetCWAbsoluteBottom (&element.header.guid, &expectedBottom) != NoError) {
+        expectedBottom = element.curtainWall.planeOffset;
+    }
+    if (zCoordinateGiven) {
+        const auto floorIndexAndOffset = ResolveFloorIndexAndOffset (item, "floorIndex", zCoordinate, stories);
+        element.header.floorInd = floorIndexAndOffset.first;
+        element.curtainWall.planeOffset = floorIndexAndOffset.second;
+        element.curtainWall.storyRelLevel = floorIndexAndOffset.second;
+        expectedBottom = floorIndexAndOffset.second;
+        ACAPI_ELEMENT_MASK_SET (mask, API_Elem_Head, floorInd);
+        ACAPI_ELEMENT_MASK_SET (mask, API_CurtainWallType, planeOffset);
+        ACAPI_ELEMENT_MASK_SET (mask, API_CurtainWallType, storyRelLevel);
+        changed = true;
+    } else if (floorIndexGiven) {
+        element.header.floorInd = floorIndex;
+        ACAPI_ELEMENT_MASK_SET (mask, API_Elem_Head, floorInd);
+        changed = true;
+    }
+
+    // The reference polyline is memo.coords from index 1, one segment per pair of consecutive
+    // vertices (see CreateCurtainWallsCommand). The segments are sub-elements with their own
+    // frames and panels, so their number is kept: only the vertices are replaced.
+    API_ElementMemo memo = {};
+    const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+    UInt64 memoMask = 0;
+    GS::Array<GS::ObjectState> coordinates;
+    if (item.Get ("coordinates", coordinates)) {
+        const UInt32 nCoords = coordinates.GetSize ();
+        if (nCoords != element.curtainWall.nSegments + 1) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, GS::UniString::Printf ("coordinates must have %u points, one more than the %u segments of the curtain wall: segments cannot be added or removed, delete and recreate the curtain wall to change their number.", element.curtainWall.nSegments + 1, element.curtainWall.nSegments));
+        }
+        for (UIndex i = 1; i < nCoords; ++i) {
+            if (IsSame2DCoordinate (coordinates[i - 1], coordinates[i])) {
+                return CreateFailedExecutionResult (APIERR_BADPARS, GS::UniString::Printf ("Zero-length segment: coordinates[%u] and coordinates[%u] are identical.", i - 1, i));
+            }
+        }
+
+        err = ACAPI_Element_GetMemo (element.header.guid, &memo, APIMemoMask_Polygon);
+        if (err != NoError) {
+            return CreateFailedExecutionResult (err, "Failed to load the reference line of the curtain wall.");
+        }
+        if (memo.coords != nullptr) {
+            BMKillHandle (reinterpret_cast<GSHandle*> (&memo.coords));
+        }
+        if (memo.parcs != nullptr) {
+            BMKillHandle (reinterpret_cast<GSHandle*> (&memo.parcs));
+        }
+        memo.coords = reinterpret_cast<API_Coord**> (BMAllocateHandle ((nCoords + 1) * sizeof (API_Coord), ALLOCATE_CLEAR, 0));
+        if (memo.coords == nullptr) {
+            return CreateFailedExecutionResult (APIERR_MEMFULL, "Failed to allocate memory for the reference line.");
+        }
+        for (UIndex i = 0; i < nCoords; ++i) {
+            (*memo.coords)[i + 1] = Get2DCoordinateFromObjectState (coordinates[i]);
+        }
+        ACAPI_ELEMENT_MASK_SET (mask, API_CurtainWallType, nSegments);
+        memoMask |= APIMemoMask_Polygon;
+        changed = true;
+    } else if (heightGiven) {
+        // The current reference line, unchanged (arcs included), so that the segments are
+        // rebuilt at the new height.
+        err = ACAPI_Element_GetMemo (element.header.guid, &memo, APIMemoMask_Polygon);
+        if (err != NoError || memo.coords == nullptr) {
+            return CreateFailedExecutionResult (err != NoError ? err : APIERR_GENERAL, "Failed to load the reference line of the curtain wall.");
+        }
+        ACAPI_ELEMENT_MASK_SET (mask, API_CurtainWallType, nSegments);
+        memoMask |= APIMemoMask_Polygon;
+    }
+
+    const GS::ObjectState* primaryPattern = item.Get ("primaryPattern");
+    const GS::ObjectState* secondaryPattern = item.Get ("secondaryPattern");
+    GS::Array<GS::ObjectState> cells;
+    const bool hasCells = item.Get ("cells", cells) && !cells.IsEmpty ();
+    const bool schemeGiven = primaryPattern != nullptr || secondaryPattern != nullptr || hasCells;
+
+    if (!changed && !schemeGiven) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "No curtain wall fields to modify.");
+    }
+
+    // The new scheme starts from the curtain wall's own (default) scheme. It is built and checked
+    // before anything is changed, so that invalid pattern fields leave the curtain wall as it was.
+    CurtainWallScheme newScheme;
+    if (schemeGiven) {
+        err = newScheme.Load (element.header.guid);
+        if (err != NoError) {
+            return CreateFailedExecutionResult (err, "Failed to load the pattern of the curtain wall.");
+        }
+        bool patternChanged = false;
+        if (primaryPattern != nullptr) {
+            const auto error = ApplyCurtainWallPattern (*primaryPattern, "primaryPattern", newScheme.memo.cWSegPrimaryPattern);
+            if (error.HasValue ()) {
+                return CreateFailedExecutionResult (APIERR_BADPARS, error.Get ());
+            }
+            patternChanged = true;
+        }
+        if (secondaryPattern != nullptr) {
+            const auto error = ApplyCurtainWallPattern (*secondaryPattern, "secondaryPattern", newScheme.memo.cWSegSecondaryPattern);
+            if (error.HasValue ()) {
+                return CreateFailedExecutionResult (APIERR_BADPARS, error.Get ());
+            }
+            patternChanged = true;
+        }
+        const auto cellsError = ApplyCurtainWallPatternCells (cells, element, newScheme.memo, patternChanged);
+        if (cellsError.HasValue ()) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, cellsError.Get ());
+        }
+    }
+
+    // Rebuilding the segments from the reference line gives every segment the curtain wall's
+    // default scheme again (confirmed live): a segment that had a scheme of its own gets it back
+    // after the rebuild, so that only the given fields change.
+    std::vector<std::unique_ptr<CurtainWallScheme>> segmentSchemes;
+    if ((memoMask & APIMemoMask_Polygon) != 0 && !schemeGiven) {
+        GS::Array<API_Guid> segmentGuids;
+        err = GetCurtainWallSegmentGuids (element, segmentGuids);
+        if (err != NoError) {
+            return CreateFailedExecutionResult (err, "Failed to load the segments of the curtain wall.");
+        }
+        for (UIndex i = 0; i < segmentGuids.GetSize (); ++i) {
+            segmentSchemes.push_back (std::make_unique<CurtainWallScheme> ());
+            err = segmentSchemes.back ()->Load (segmentGuids[i]);
+            if (err != NoError) {
+                return CreateFailedExecutionResult (err, GS::UniString::Printf ("Failed to load the pattern of segment %u of the curtain wall.", i));
+            }
+        }
+    }
+
+    if (changed) {
+        err = ACAPI_Element_Change (&element, &mask, memoMask != 0 ? &memo : nullptr, memoMask, true);
+        if (err != NoError) {
+            return CreateFailedExecutionResult (err, "Failed to modify curtain wall.");
+        }
+
+        // A change Archicad accepted but did not apply is a failure, not a success.
+        API_Element readBack = {};
+        readBack.header.guid = element.header.guid;
+        if (ACAPI_Element_Get (&readBack) != NoError) {
+            return CreateFailedExecutionResult (APIERR_GENERAL, "Failed to read back the modified curtain wall.");
+        }
+        // The height and the bottom are read back from the geometry Archicad built, not from
+        // the fields that were sent.
+        if (heightGiven) {
+            double actualHeight = 0.0;
+            if (ACAPI_CurtainWall_GetCWHeight (&element.header.guid, &actualHeight) != NoError || std::fabs (actualHeight - height) > 1e-5) {
+                return CreateFailedExecutionResult (APIERR_GENERAL, GS::UniString::Printf ("Archicad did not apply the height to the curtain wall: it is %.4f instead of %.4f.", actualHeight, height));
+            }
+        }
+        if ((zCoordinateGiven || floorIndexGiven) && readBack.header.floorInd != element.header.floorInd) {
+            return CreateFailedExecutionResult (APIERR_GENERAL, "Archicad did not apply the home story to the curtain wall.");
+        }
+        if (zCoordinateGiven || floorIndexGiven) {
+            double actualBottom = 0.0;
+            if (ACAPI_CurtainWall_GetCWAbsoluteBottom (&element.header.guid, &actualBottom) != NoError || std::fabs (actualBottom - expectedBottom) > 1e-5) {
+                return CreateFailedExecutionResult (APIERR_GENERAL, "Archicad did not apply the bottom elevation to the curtain wall.");
+            }
+        }
+        if (!coordinates.IsEmpty ()) {
+            // The reference line is read back too: a polygon change Archicad accepted but
+            // ignored would otherwise be the silent no-op this command exists to avoid.
+            const UInt32 nCoords = coordinates.GetSize ();
+            API_ElementMemo readBackMemo = {};
+            const GS::OnExit readBackMemoGuard ([&readBackMemo] () { ACAPI_DisposeElemMemoHdls (&readBackMemo); });
+            if (ACAPI_Element_GetMemo (element.header.guid, &readBackMemo, APIMemoMask_Polygon) != NoError || readBackMemo.coords == nullptr) {
+                return CreateFailedExecutionResult (APIERR_GENERAL, "Failed to read back the reference line of the modified curtain wall.");
+            }
+            const UInt32 nReadBackCoords = static_cast<UInt32> (BMGetHandleSize (reinterpret_cast<GSHandle> (readBackMemo.coords)) / sizeof (API_Coord));
+            bool applied = readBack.curtainWall.nSegments + 1 == nCoords && nReadBackCoords >= nCoords + 1;
+            for (UIndex i = 0; applied && i < nCoords; ++i) {
+                applied = IsSame2DCoordinate ((*readBackMemo.coords)[i + 1], Get2DCoordinateFromObjectState (coordinates[i]));
+            }
+            if (!applied) {
+                return CreateFailedExecutionResult (APIERR_GENERAL, "Archicad did not apply the coordinates to the reference line of the curtain wall.");
+            }
+        }
+        element = readBack;
+    }
+
+    if (!schemeGiven && segmentSchemes.empty ()) {
+        return CreateSuccessfulExecutionResult ();
+    }
+
+    GS::Array<API_Guid> segmentGuids;
+    err = GetCurtainWallSegmentGuids (element, segmentGuids);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to load the segments of the curtain wall.");
+    }
+
+    if (!schemeGiven) {
+        // The rebuild kept the number of segments (coordinates must keep it), so segment i is
+        // the same part of the reference line as before.
+        for (UIndex i = 0; i < segmentGuids.GetSize () && i < segmentSchemes.size (); ++i) {
+            if (!HasCurtainWallScheme (segmentGuids[i], segmentSchemes[i]->memo)) {
+                const auto error = SetCurtainWallScheme (segmentGuids[i], segmentSchemes[i]->memo, GS::UniString::Printf ("segment %u of the curtain wall", i),
+                    GS::UniString::Printf ("Archicad did not keep the pattern of segment %u of the curtain wall when it rebuilt the segments.", i));
+                if (error.HasValue ()) {
+                    return error.Get ();
+                }
+            }
+        }
+        return CreateSuccessfulExecutionResult ();
+    }
+
+    // The new scheme goes to the curtain wall itself, as its default segment scheme (the way
+    // Element_Test's Do_CurtainWall_Edit changes the pattern of a curtain wall). Archicad passes
+    // it on to the segments, and a later rebuild of the segments (a new height or reference line)
+    // keeps it, which a scheme set on the segments alone does not (both confirmed live).
+    auto error = SetCurtainWallScheme (element.header.guid, newScheme.memo, "the curtain wall", "Archicad did not apply the pattern to the curtain wall.");
+    if (error.HasValue ()) {
+        return error.Get ();
+    }
+    // A segment that did not take it over (one with a scheme of its own) gets it directly.
+    for (UIndex i = 0; i < segmentGuids.GetSize (); ++i) {
+        if (!HasCurtainWallScheme (segmentGuids[i], newScheme.memo)) {
+            error = SetCurtainWallScheme (segmentGuids[i], newScheme.memo, GS::UniString::Printf ("segment %u of the curtain wall", i),
+                GS::UniString::Printf ("Archicad did not apply the pattern to segment %u of the curtain wall.", i));
+            if (error.HasValue ()) {
+                return error.Get ();
+            }
+        }
+    }
+
+    return CreateSuccessfulExecutionResult ();
+}
+
+}
+
+GS::ObjectState ModifyCurtainWallsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl&) const
+{
+    GS::Array<GS::ObjectState> items;
+    auto error = GetElementArray (parameters, "curtainWallsWithDetails", items);
+    if (error.HasValue ()) {
+        return CreateErrorResponse (APIERR_BADPARS, error.Get ());
+    }
+
+    const Stories stories = GetStories ();
+
+    return ExecuteModifyWithResults ("Modify Curtain Walls", [&](GS::Array<GS::ObjectState>& results) {
+        for (const auto& item : items) {
+            results.Push (ModifyCurtainWall (item, stories));
         }
     });
 }
