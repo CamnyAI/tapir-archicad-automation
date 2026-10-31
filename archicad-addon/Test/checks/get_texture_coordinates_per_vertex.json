@@ -1,0 +1,219 @@
+{
+  "title": "GetTextureCoordinates: per-vertex (u, v) of a textured box, joined with Get3DGeometryOfElements, moved and turned with its texture projection",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "surface with a 1 m x 0.5 m texture",
+      "command": "CreateSurfaces",
+      "creates": false,
+      "params": {
+        "surfaceDataArray": [
+          {
+            "name": "TapirCheck texture",
+            "materialType": "General",
+            "texture": { "name": "TapirCheck picture", "xSize": 1.0, "ySize": 0.5, "rotationAngle": 0.0 }
+          }
+        ],
+        "overwriteExisting": true
+      },
+      "save": { "surface": "attributeIds[0].attributeId.guid" }
+    },
+    {
+      "id": "2 m x 1 m x 1 m box morph with that surface",
+      "command": "CreateMorphs",
+      "params": {
+        "morphsData": [
+          {
+            "basePoint": { "x": 700.0, "y": 700.0, "z": 0.0 },
+            "size": { "x": 2.0, "y": 1.0, "z": 1.0 },
+            "surfaceId": { "guid": "${surface}" }
+          }
+        ]
+      },
+      "save": { "m1": "elements[0].elementId.guid" }
+    },
+    {
+      "id": "planar texture projection from the box's corner",
+      "command": "ModifyMorphs",
+      "creates": false,
+      "params": {
+        "morphsWithDetails": [
+          {
+            "elementId": { "guid": "${m1}" },
+            "textureProjectionType": "Planar",
+            "textureProjectionCoords": [
+              { "x": 700.0, "y": 700.0, "z": 0.0 },
+              { "x": 701.0, "y": 700.0, "z": 0.0 },
+              { "x": 700.0, "y": 701.0, "z": 0.0 },
+              { "x": 700.0, "y": 700.0, "z": 1.0 }
+            ]
+          }
+        ]
+      },
+      "expect": [ { "path": "executionResults[0].success", "eq": true } ]
+    },
+    {
+      "id": "texture coordinates with vertices",
+      "command": "GetTextureCoordinates",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${m1}" } } ], "includeVertices": true },
+      "save": {
+        "u0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].u",
+        "v0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].v",
+        "u2": "textureCoordinates[0].bodies[0].polygons[0].uvs[2].u",
+        "v2": "textureCoordinates[0].bodies[0].polygons[0].uvs[2].v",
+        "su0": "textureCoordinates[0].bodies[0].polygons[3].uvs[0].u",
+        "sv0": "textureCoordinates[0].bodies[0].polygons[3].uvs[0].v",
+        "su2": "textureCoordinates[0].bodies[0].polygons[3].uvs[2].u",
+        "sv2": "textureCoordinates[0].bodies[0].polygons[3].uvs[2].v",
+        "tId0": "textureCoordinates[0].bodies[0].polygons[0].vertexIds[0]",
+        "tId3": "textureCoordinates[0].bodies[0].polygons[5].vertexIds[3]",
+        "tX5": "textureCoordinates[0].bodies[0].vertices[5].x",
+        "tZ5": "textureCoordinates[0].bodies[0].vertices[5].z"
+      },
+      "expect": [
+        { "path": "textureCoordinates[0].bodies", "len": 1, "name": "one body" },
+        { "path": "textureCoordinates[0].bodies[0].polygons", "len": 6, "name": "six faces" },
+        { "path": "textureCoordinates[0].bodies[0].polygons[0].uvs", "len": 4, "name": "a (u, v) at each of the 4 corners of a face" },
+        { "path": "textureCoordinates[0].bodies[0].vertices", "len": 8, "name": "the 8 corners with includeVertices" },
+        { "path": "textureCoordinates[0].materials[0].name", "eq": "TapirCheck texture", "name": "the face's surface" },
+        { "path": "textureCoordinates[0].bodies[0].polygons[0].materialIndex", "eq": 0 },
+        { "path": "textureCoordinates[0].materials[0].texture.xSize", "approx": 1.0 },
+        { "path": "textureCoordinates[0].materials[0].texture.ySize", "approx": 0.5 },
+        { "expr": "${u0}", "approx": 2.0, "name": "bottom face, corner at x 702: u is 2 m from the projection origin" },
+        { "expr": "${v0}", "approx": 0.0 },
+        { "expr": "(${u0} - ${u2}) * (${u0} - ${u2}) + (${v0} - ${v2}) * (${v0} - ${v2})", "approx": 5.0, "name": "the uv diagonal of the 2 m x 1 m bottom face is its diagonal in meters (5 m2)" },
+        { "expr": "(${su0} - ${su2}) * (${su0} - ${su2}) + (${sv0} - ${sv2}) * (${sv0} - ${sv2})", "approx": 2.0, "name": "the uv diagonal of a 1 m x 1 m side face (2 m2)" }
+      ]
+    },
+    {
+      "id": "the same faces and vertices as Get3DGeometryOfElements",
+      "command": "Get3DGeometryOfElements",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${m1}" } } ] },
+      "save": {
+        "gId0": "geometries3D[0].bodies[0].polygons[0].vertexIds[0]",
+        "gId3": "geometries3D[0].bodies[0].polygons[5].vertexIds[3]",
+        "gX5": "geometries3D[0].bodies[0].vertices[5].x",
+        "gZ5": "geometries3D[0].bodies[0].vertices[5].z"
+      },
+      "expect": [
+        { "path": "geometries3D[0].bodies[0].polygons", "len": 6 },
+        { "expr": "${tId0} - ${gId0}", "approx": 0.0, "tol": 1e-9, "name": "same vertex index" },
+        { "expr": "${tId3} - ${gId3}", "approx": 0.0, "tol": 1e-9, "name": "same vertex index, last face" },
+        { "expr": "${tX5} - ${gX5}", "approx": 0.0, "tol": 1e-9, "name": "same world x" },
+        { "expr": "${tZ5} - ${gZ5}", "approx": 0.0, "tol": 1e-9, "name": "same world z" }
+      ]
+    },
+    {
+      "id": "move the projection by 0.25 m in x and 0.5 m in y",
+      "command": "ModifyMorphs",
+      "creates": false,
+      "params": {
+        "morphsWithDetails": [
+          {
+            "elementId": { "guid": "${m1}" },
+            "textureProjectionType": "Planar",
+            "textureProjectionCoords": [
+              { "x": 700.25, "y": 700.5, "z": 0.0 },
+              { "x": 701.25, "y": 700.5, "z": 0.0 },
+              { "x": 700.25, "y": 701.5, "z": 0.0 },
+              { "x": 700.25, "y": 700.5, "z": 1.0 }
+            ]
+          }
+        ]
+      },
+      "expect": [ { "path": "executionResults[0].success", "eq": true } ]
+    },
+    {
+      "id": "texture coordinates after the move",
+      "command": "GetTextureCoordinates",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${m1}" } } ] },
+      "save": {
+        "mu0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].u",
+        "mv0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].v"
+      },
+      "expect": [
+        { "expr": "${mu0} - ${u0}", "approx": -0.25, "name": "u follows the move" },
+        { "expr": "${mv0} - ${v0}", "approx": -0.5, "name": "v follows the move" }
+      ]
+    },
+    {
+      "id": "turn the projection by 90 degrees",
+      "command": "ModifyMorphs",
+      "creates": false,
+      "params": {
+        "morphsWithDetails": [
+          {
+            "elementId": { "guid": "${m1}" },
+            "textureProjectionType": "Planar",
+            "textureProjectionCoords": [
+              { "x": 700.0, "y": 700.0, "z": 0.0 },
+              { "x": 700.0, "y": 701.0, "z": 0.0 },
+              { "x": 699.0, "y": 700.0, "z": 0.0 },
+              { "x": 700.0, "y": 700.0, "z": 1.0 }
+            ]
+          }
+        ]
+      },
+      "expect": [ { "path": "executionResults[0].success", "eq": true } ]
+    },
+    {
+      "id": "texture coordinates after the turn",
+      "command": "GetTextureCoordinates",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${m1}" } } ] },
+      "save": {
+        "ru0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].u",
+        "rv0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].v"
+      },
+      "expect": [
+        { "expr": "${ru0}", "approx": 0.0, "name": "u now runs along y" },
+        { "expr": "${rv0}", "approx": -2.0, "name": "v now runs against x" }
+      ]
+    },
+    {
+      "id": "the surface's texture twice as wide",
+      "command": "CreateSurfaces",
+      "creates": false,
+      "params": {
+        "surfaceDataArray": [
+          {
+            "name": "TapirCheck texture",
+            "materialType": "General",
+            "texture": { "name": "TapirCheck picture", "xSize": 2.0, "ySize": 0.5, "rotationAngle": 0.0 }
+          }
+        ],
+        "overwriteExisting": true
+      }
+    },
+    {
+      "id": "texture coordinates do not include the texture's size",
+      "command": "GetTextureCoordinates",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${m1}" } } ] },
+      "save": { "wu0": "textureCoordinates[0].bodies[0].polygons[0].uvs[0].u" },
+      "expect": [
+        { "path": "textureCoordinates[0].materials[0].texture.xSize", "approx": 2.0, "name": "the new size is reported" },
+        { "expr": "${wu0} - ${ru0}", "approx": 0.0, "name": "u is unchanged: the renderer divides by xSize" }
+      ]
+    },
+    {
+      "id": "convex polygons of the box: its six faces",
+      "command": "TriangulatePolygonsOfElements",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${m1}" } } ], "convex": true },
+      "expect": [
+        { "path": "triangulations[0].convexPolygons", "len": 6 },
+        { "path": "triangulations[0].convexPolygons[0].vertices", "len": 4 }
+      ]
+    }
+  ],
+  "teardown": [
+    {
+      "command": "DeleteAttributes",
+      "params": { "attributesToDelete": [ { "attributeType": "Surface", "attributeId": { "guid": "${surface}" } } ] }
+    }
+  ]
+}

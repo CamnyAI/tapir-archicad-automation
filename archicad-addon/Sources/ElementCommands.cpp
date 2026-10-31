@@ -7146,6 +7146,10 @@ static GSErrCode CollectSolidBodies (const API_Elem_Head& elemHead, GS::Array<GS
                 component.header.typeID = API_UmatID;
                 component.header.index = pgon.iumat;
                 if (ACAPI_ModelAccess_GetComponent (&component) == NoError) {
+                    // The material comes with a texture file location allocated for the caller,
+                    // as in the DevKit's 3D_Test example (GetUMaterial).
+                    delete component.umat.mater.texture.fileLoc;
+                    component.umat.mater.texture.fileLoc = nullptr;
                     const API_Guid surfaceGuid = GetAttributeGuidFromIndex (API_MaterialID, component.umat.mater.head.index);
                     if (surfaceGuid != APINULLGuid) {
                         polygonOS.Add ("surfaceId", CreateGuidObjectState (surfaceGuid));
@@ -7163,7 +7167,7 @@ static GSErrCode CollectSolidBodies (const API_Elem_Head& elemHead, GS::Array<GS
 }
 
 template<typename APIElemType>
-static void CollectSubelementBodies (APIElemType* subelemArray, GS::Array<GS::ObjectState>& bodies)
+static void AddSubelementHeads (APIElemType* subelemArray, GS::Array<API_Elem_Head>& subelements)
 {
     if (subelemArray == nullptr) {
         return;
@@ -7171,22 +7175,23 @@ static void CollectSubelementBodies (APIElemType* subelemArray, GS::Array<GS::Ob
 
     const GSSize nSubelements = BMGetPtrSize (reinterpret_cast<GSPtr>(subelemArray)) / sizeof (APIElemType);
     for (GSIndex i = 0; i < nSubelements; ++i) {
-        CollectSolidBodies (subelemArray[i].head, bodies);
+        subelements.Push (subelemArray[i].head);
     }
 }
 
 // A Stair carries its 3D geometry in its subelements (see CalculateStairBounds above), and so do
-// a Railing and a Curtain Wall, so their subelements' bodies are collected too. The 3D model of a
-// Column or a Beam belongs to its segments, so theirs are collected when the element itself has
-// no body, which keeps a body from being answered twice. Returns whether the element is one of those.
-static bool CollectBodiesOfSubelements (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& bodies)
+// a Railing and a Curtain Wall, so their subelements' bodies belong to its 3D model too. The 3D
+// model of a Column or a Beam belongs to its segments, so they count when the element itself has
+// no body (hasOwnBodies), which keeps a body from being answered twice. Gives those subelements in
+// the order their bodies are answered; returns whether the element is one of those types.
+static bool GetSubelementsWithBodies (const API_Elem_Head& elemHead, bool hasOwnBodies, GS::Array<API_Elem_Head>& subelements)
 {
     const API_ElemTypeID typeID = GetElemTypeId (elemHead);
     const bool isSegmented = typeID == API_ColumnID || typeID == API_BeamID;
     if (typeID != API_StairID && typeID != API_RailingID && typeID != API_CurtainWallID && !isSegmented) {
         return false;
     }
-    if (isSegmented && !bodies.IsEmpty ()) {
+    if (isSegmented && hasOwnBodies) {
         return true;
     }
 
@@ -7196,31 +7201,47 @@ static bool CollectBodiesOfSubelements (const API_Elem_Head& elemHead, GS::Array
         return true;
     }
 
-    CollectSubelementBodies (memo.stairRisers, bodies);
-    CollectSubelementBodies (memo.stairTreads, bodies);
-    CollectSubelementBodies (memo.stairStructures, bodies);
+    AddSubelementHeads (memo.stairRisers, subelements);
+    AddSubelementHeads (memo.stairTreads, subelements);
+    AddSubelementHeads (memo.stairStructures, subelements);
 
-    CollectSubelementBodies (memo.railingPosts, bodies);
-    CollectSubelementBodies (memo.railingInnerPosts, bodies);
-    CollectSubelementBodies (memo.railingBalusters, bodies);
-    CollectSubelementBodies (memo.railingPanels, bodies);
-    CollectSubelementBodies (memo.railingRails, bodies);
-    CollectSubelementBodies (memo.railingToprails, bodies);
-    CollectSubelementBodies (memo.railingHandrails, bodies);
-    CollectSubelementBodies (memo.railingRailEnds, bodies);
-    CollectSubelementBodies (memo.railingToprailEnds, bodies);
-    CollectSubelementBodies (memo.railingHandrailEnds, bodies);
-    CollectSubelementBodies (memo.railingRailConnections, bodies);
-    CollectSubelementBodies (memo.railingToprailConnections, bodies);
-    CollectSubelementBodies (memo.railingHandrailConnections, bodies);
+    AddSubelementHeads (memo.railingPosts, subelements);
+    AddSubelementHeads (memo.railingInnerPosts, subelements);
+    AddSubelementHeads (memo.railingBalusters, subelements);
+    AddSubelementHeads (memo.railingPanels, subelements);
+    AddSubelementHeads (memo.railingRails, subelements);
+    AddSubelementHeads (memo.railingToprails, subelements);
+    AddSubelementHeads (memo.railingHandrails, subelements);
+    AddSubelementHeads (memo.railingRailEnds, subelements);
+    AddSubelementHeads (memo.railingToprailEnds, subelements);
+    AddSubelementHeads (memo.railingHandrailEnds, subelements);
+    AddSubelementHeads (memo.railingRailConnections, subelements);
+    AddSubelementHeads (memo.railingToprailConnections, subelements);
+    AddSubelementHeads (memo.railingHandrailConnections, subelements);
 
-    CollectSubelementBodies (memo.cWallFrames, bodies);
-    CollectSubelementBodies (memo.cWallPanels, bodies);
-    CollectSubelementBodies (memo.cWallJunctions, bodies);
-    CollectSubelementBodies (memo.cWallAccessories, bodies);
+    AddSubelementHeads (memo.cWallFrames, subelements);
+    AddSubelementHeads (memo.cWallPanels, subelements);
+    AddSubelementHeads (memo.cWallJunctions, subelements);
+    AddSubelementHeads (memo.cWallAccessories, subelements);
 
-    CollectSubelementBodies (memo.columnSegments, bodies);
-    CollectSubelementBodies (memo.beamSegments, bodies);
+    AddSubelementHeads (memo.columnSegments, subelements);
+    AddSubelementHeads (memo.beamSegments, subelements);
+
+    return true;
+}
+
+// Adds the bodies of the element's subelements (see GetSubelementsWithBodies) after its own.
+// Returns whether the element is a type that has them.
+static bool CollectBodiesOfSubelements (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& bodies)
+{
+    GS::Array<API_Elem_Head> subelements;
+    if (!GetSubelementsWithBodies (elemHead, !bodies.IsEmpty (), subelements)) {
+        return false;
+    }
+
+    for (const API_Elem_Head& subelement : subelements) {
+        CollectSolidBodies (subelement, bodies);
+    }
 
     return true;
 }
@@ -8216,14 +8237,71 @@ static bool HasTriangulablePolygon (API_ElemTypeID typeId)
     }
 }
 
-// The convex polygons of the faces of the element's own 3D model. The bodies are walked like
-// CollectSolidBodies does; fetching a body makes it the active body, whose polygons
-// ACAPI_ModelAccess_DecomposePgon decomposes. The handle it returns holds
-//   -n, -m1, i1 .. i(m1), -m2, j1 .. j(m2), ...
-// n being the number of convex polygons (0 for a degenerate face), mi the number of vertices of
-// the next one and i1.. its 1-based vertex indices within the body; the caller disposes it.
-static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& convexPolygons)
+// ACAPI_ModelAccess_Get3DInfo answers APIERR_BADDATABASE from any database other than the floor
+// plan and the 3D window (#1482), so from those the floor plan is made the current database for the
+// reads, as Get3DGeometryOfElements does. `switched` says whether the caller has to make
+// previousDatabase the current one again.
+static void SwitchToDatabaseWith3DModel (API_DatabaseInfo& previousDatabase, bool& switched)
 {
+    switched = false;
+    API_DatabaseInfo currentDatabase = {};
+    if (ACAPI_Database_GetCurrentDatabase (&currentDatabase) == NoError && currentDatabase.typeID != APIWind_3DModelID) {
+        SwitchCurrentDatabaseToFloorPlan (previousDatabase, switched);
+    }
+}
+
+// The contours of face iPgon of the body fetched last, walked as CollectSolidBodies walks them, so
+// that a face is skipped in the same cases and the indices are the same as Get3DGeometryOfElements
+// answers: the outer contour first, then the holes, each as 0-based vertex indices of the body.
+// Returns false for a face that CollectSolidBodies leaves out (it cannot be read, or its outer
+// contour has fewer than 3 vertices).
+static bool GetFaceContours (Int32 iPgon, API_PgonType& pgon, GS::Array<GS::Array<Int32>>& contours)
+{
+    API_Component3D component = {};
+    component.header.typeID = API_PgonID;
+    component.header.index = iPgon;
+    if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+        return false;
+    }
+    pgon = component.pgon;
+
+    contours.Clear ();
+    contours.Push (GS::Array<Int32> ());
+    for (Int32 iPedg = pgon.fpedg; iPedg <= pgon.lpedg; ++iPedg) {
+        component.header.typeID = API_PedgID;
+        component.header.index = iPedg;
+        if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+            continue;
+        }
+        const Int32 pedg = component.pedg.pedg;
+        if (pedg == 0) {
+            contours.Push (GS::Array<Int32> ());
+            continue;
+        }
+        component.header.typeID = API_EdgeID;
+        component.header.index = pedg > 0 ? pedg : -pedg;
+        if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+            continue;
+        }
+        contours.GetLast ().Push ((pedg > 0 ? component.edge.vert1 : component.edge.vert2) - 1);
+    }
+
+    return contours[0].GetSize () >= 3;
+}
+
+// The convex polygons of the faces of the element's own 3D model, added to convexPolygons; nSolidBodies
+// gets the number of its solid bodies. The bodies are walked like CollectSolidBodies does; fetching a
+// body makes it the active body, whose faces ACAPI_ModelAccess_DecomposePgon decomposes. The handle it
+// returns holds
+//   -n, -m1, i1 .. i(m1), -m2, j1 .. j(m2), ...
+// n being the number of convex polygons, mi the number of vertices of the next one and i1.. its
+// 1-based vertex indices within the body; the caller disposes it. For a face that is convex already
+// it gives no polygon (on Archicad 30, the faces of a wall, a slab or a column), so a face that is
+// neither concave nor has holes is answered as it is, by its outer contour.
+static GSErrCode CollectConvexPolygonsOfBodies (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& convexPolygons, Int32& nSolidBodies)
+{
+    nSolidBodies = 0;
+
     API_ElemInfo3D info3D = {};
     GSErrCode err = ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
     if (err != NoError) {
@@ -8240,6 +8318,7 @@ static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array
         if (component.body.nPgon == 0) { // Skip non-solid bodies
             continue;
         }
+        ++nSolidBodies;
 
         const API_BodyType body = component.body;
 
@@ -8254,7 +8333,28 @@ static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array
             vertices.Push (vertex);
         }
 
+        const auto addPolygon = [&] (const GS::Array<Int32>& oneBasedVertexIds) {
+            if (oneBasedVertexIds.GetSize () < 3) {
+                return;
+            }
+            GS::ObjectState polygonOS;
+            const auto& polygonVertices = polygonOS.AddList<GS::ObjectState> ("vertices");
+            for (Int32 vertexIndex : oneBasedVertexIds) {
+                if (vertexIndex < 1 || vertexIndex > static_cast<Int32> (vertices.GetSize ())) {
+                    return;
+                }
+                polygonVertices (Create3DCoordinateObjectState (vertices[vertexIndex - 1]));
+            }
+            convexPolygons.Push (polygonOS);
+        };
+
         for (Int32 iPgon = 1; iPgon <= body.nPgon; ++iPgon) {
+            API_PgonType pgon = {};
+            GS::Array<GS::Array<Int32>> contours;
+            if (!GetFaceContours (iPgon, pgon, contours)) {
+                continue;
+            }
+
             Int32** cpoly = nullptr;
             err = ACAPI_ModelAccess_DecomposePgon (iPgon, &cpoly);
             const GS::OnExit cpolyGuard ([&cpoly] () {
@@ -8262,41 +8362,57 @@ static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array
                     BMKillHandle (reinterpret_cast<GSHandle*> (&cpoly));
                 }
             });
-            if (err != NoError || cpoly == nullptr) {
-                continue;
-            }
 
-            const GSSize nItems = BMhGetSize (reinterpret_cast<GSHandle> (cpoly)) / sizeof (Int32);
-            if (nItems < 1) {
-                continue;
-            }
-            const Int32 nSubpolygons = -(*cpoly)[0];
-            GSSize i = 1;
-            for (Int32 iSub = 0; iSub < nSubpolygons && i < nItems; ++iSub) {
-                const Int32 nSubVertices = -(*cpoly)[i++];
-                if (nSubVertices <= 0 || i + nSubVertices > nItems) {
-                    break;
-                }
-                GS::ObjectState polygonOS;
-                const auto& polygonVertices = polygonOS.AddList<GS::ObjectState> ("vertices");
-                bool valid = true;
-                for (Int32 j = 0; j < nSubVertices; ++j) {
-                    const Int32 vertexIndex = (*cpoly)[i + j];
-                    if (vertexIndex < 1 || vertexIndex > static_cast<Int32> (vertices.GetSize ())) {
-                        valid = false;
+            UIndex nDecomposed = 0;
+            const GSSize nItems = (err == NoError && cpoly != nullptr) ? BMhGetSize (reinterpret_cast<GSHandle> (cpoly)) / sizeof (Int32) : 0;
+            if (nItems >= 1) {
+                const Int32 nSubpolygons = -(*cpoly)[0];
+                GSSize i = 1;
+                for (Int32 iSub = 0; iSub < nSubpolygons && i < nItems; ++iSub) {
+                    const Int32 nSubVertices = -(*cpoly)[i++];
+                    if (nSubVertices <= 0 || i + nSubVertices > nItems) {
                         break;
                     }
-                    polygonVertices (Create3DCoordinateObjectState (vertices[vertexIndex - 1]));
+                    GS::Array<Int32> subpolygon;
+                    for (Int32 j = 0; j < nSubVertices; ++j) {
+                        subpolygon.Push ((*cpoly)[i + j]);
+                    }
+                    i += nSubVertices;
+                    const USize nBefore = convexPolygons.GetSize ();
+                    addPolygon (subpolygon);
+                    nDecomposed += convexPolygons.GetSize () - nBefore;
                 }
-                i += nSubVertices;
-                if (valid && nSubVertices >= 3) {
-                    convexPolygons.Push (polygonOS);
+            }
+
+            if (nDecomposed == 0 && (pgon.status & APIPgon_Complex) == 0) {
+                GS::Array<Int32> outline;
+                for (Int32 vertexId : contours[0]) {
+                    outline.Push (vertexId + 1);
                 }
+                addPolygon (outline);
             }
         }
     }
 
     return NoError;
+}
+
+// The convex polygons of the faces of the element's 3D model, with those of its subelements as
+// Get3DGeometryOfElements answers them (see GetSubelementsWithBodies).
+static GSErrCode CollectConvexPolygons (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& convexPolygons)
+{
+    Int32 nSolidBodies = 0;
+    GSErrCode err = CollectConvexPolygonsOfBodies (elemHead, convexPolygons, nSolidBodies);
+
+    GS::Array<API_Elem_Head> subelements;
+    if (GetSubelementsWithBodies (elemHead, nSolidBodies > 0, subelements)) {
+        err = NoError;
+        for (const API_Elem_Head& subelement : subelements) {
+            CollectConvexPolygonsOfBodies (subelement, convexPolygons, nSolidBodies);
+        }
+    }
+
+    return err;
 }
 
 TriangulatePolygonsOfElementsCommand::TriangulatePolygonsOfElementsCommand () :
@@ -8319,7 +8435,7 @@ GS::Optional<GS::UniString> TriangulatePolygonsOfElementsCommand::GetInputParame
             },
             "convex": {
                 "type": "boolean",
-                "description": "Optional. When true, the faces of the 3D model of each element (its own bodies, any element type) are decomposed into convex polygons instead, as Archicad does it, and returned as convexPolygons. Default value is false."
+                "description": "Optional. When true, the faces of the 3D model of each element (any element type, with its subelements as in Get3DGeometryOfElements) are decomposed into convex polygons instead, as Archicad does it, and returned as convexPolygons. Default value is false."
             }
         },
         "additionalProperties": false,
@@ -8375,7 +8491,7 @@ GS::Optional<GS::UniString> TriangulatePolygonsOfElementsCommand::GetRawResponse
                             "properties": {
                                 "convexPolygons": {
                                     "type": "array",
-                                    "description": "With convex: true, the convex polygons the faces of the element's 3D model are decomposed into, body by body and face by face. Empty (or an error item instead) when the element has no solid 3D model of its own (the bodies of a Stair, Railing or Curtain Wall, and of the segments of a Column or Beam, belong to their subelements, which can be given instead).",
+                                    "description": "With convex: true, the convex polygons the faces of the element's 3D model are decomposed into, body by body and face by face, with the bodies Get3DGeometryOfElements answers: including those of its subelements for a Stair, Railing or Curtain Wall, and of its segments for a Column or Beam. A face that is convex already is one polygon. Empty when the element has no solid 3D model.",
                                     "items": {
                                         "type": "object",
                                         "properties": {
@@ -8420,6 +8536,17 @@ GS::ObjectState TriangulatePolygonsOfElementsCommand::Execute (const GS::ObjectS
     parameters.Get ("elements", elements);
     bool convex = false;
     parameters.Get ("convex", convex);
+
+    API_DatabaseInfo previousDatabase = {};
+    bool databaseSwitched = false;
+    const GS::OnExit restoreDatabase ([&]() {
+        if (databaseSwitched) {
+            ACAPI_Database_ChangeCurrentDatabase (&previousDatabase);
+        }
+    });
+    if (convex) {
+        SwitchToDatabaseWith3DModel (previousDatabase, databaseSwitched);
+    }
 
     GS::ObjectState response;
     const auto& triangulations = response.AddList<GS::ObjectState> ("triangulations");
@@ -8599,13 +8726,110 @@ GS::ObjectState Get3DModelCountsCommand::Execute (const GS::ObjectState& /*param
 
 // GetTextureCoordinates
 
-// The texture coordinates of the faces of the element's own 3D model, one body after the other
-// like CollectSolidBodies walks them. ACAPI_ModelAccess_GetTextureCoord identifies a body by the
-// 0-based element and body indices of its header, so a body whose header has none has no texture
-// information. The coordinates are taken at the first vertex of each face, the start of the
-// first edge of its outer contour.
-static GSErrCode CollectTextureCoordinates (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& bodies)
+// The materials the faces of one element's 3D model refer to, in the order the faces first use them.
+// A face refers to an entry of the 3D model's material table (API_UmatID), which is global, not
+// per body; the faces of all bodies of the element share this list.
+struct FaceMaterials {
+    GS::HashTable<Int32, Int32>     indexOfUmat;
+    GS::Array<GS::ObjectState>      materials;
+};
+
+// The index of the material iumat in `materials`, added at its first use: its name, the surface
+// attribute it was made from (left out for a material defined by a GDL script, as in
+// Get3DGeometryOfElements) and its texture.
+static GS::Optional<Int32> GetFaceMaterialIndex (Int32 iumat, FaceMaterials& materials)
 {
+    if (iumat <= 0) {
+        return {};
+    }
+    if (materials.indexOfUmat.ContainsKey (iumat)) {
+        const Int32 index = materials.indexOfUmat.Get (iumat);
+        if (index < 0) {
+            return {};
+        }
+        return index;
+    }
+
+    API_Component3D component = {};
+    component.header.typeID = API_UmatID;
+    component.header.index = iumat;
+    if (ACAPI_ModelAccess_GetComponent (&component) != NoError) {
+        materials.indexOfUmat.Add (iumat, -1);
+        return {};
+    }
+    API_MaterialType& material = component.umat.mater;
+    // The material comes with a texture file location allocated for the caller, as in the DevKit's
+    // 3D_Test example (GetUMaterial).
+    const GS::OnExit fileLocGuard ([&material] () {
+        delete material.texture.fileLoc;
+        material.texture.fileLoc = nullptr;
+    });
+
+    GS::ObjectState materialOS;
+    materialOS.Add ("name", GS::UniString (material.head.name, CC_UTF8));
+    const API_Guid surfaceGuid = GetAttributeGuidFromIndex (API_MaterialID, material.head.index);
+    if (surfaceGuid != APINULLGuid) {
+        materialOS.Add ("surfaceId", CreateGuidObjectState (surfaceGuid));
+    }
+    const API_Texture& texture = material.texture;
+    if (texture.texName[0] != 0) {
+        GS::ObjectState textureOS;
+        textureOS.Add ("name", GS::UniString (texture.texName));
+        if (texture.fileLoc != nullptr) {
+            textureOS.Add ("filePath", texture.fileLoc->ToDisplayText ());
+        }
+        textureOS.Add ("xSize", texture.xSize);
+        textureOS.Add ("ySize", texture.ySize);
+        textureOS.Add ("rotationAngle", texture.rotAng);
+        textureOS.Add ("mirrorX", (texture.status & APITxtr_MirrorX) != 0);
+        textureOS.Add ("mirrorY", (texture.status & APITxtr_MirrorY) != 0);
+        textureOS.Add ("FillRectangle", (texture.status & APITxtr_FillRectNatur) != 0);
+        textureOS.Add ("FitPicture", (texture.status & APITxtr_FitPictNatur) != 0);
+        materialOS.Add ("texture", textureOS);
+    }
+
+    const Int32 index = static_cast<Int32> (materials.materials.GetSize ());
+    materials.materials.Push (materialOS);
+    materials.indexOfUmat.Add (iumat, index);
+    return index;
+}
+
+// Adds vertexIds and uvs to contourOS: the texture coordinates at each vertex of a contour of a face.
+// ACAPI_ModelAccess_GetTextureCoord takes the point in the body's own coordinates, as the DevKit's
+// 3D_Test example passes it, not in world coordinates.
+static GSErrCode AddContourTextureCoordinates (const API_TexCoordPars& faceTexCoordPars, const GS::Array<Int32>& contour, const GS::Array<API_Coord3D>& localVertices, GS::ObjectState& contourOS)
+{
+    const auto& vertexIds = contourOS.AddList<Int32> ("vertexIds");
+    const auto& uvs = contourOS.AddList<GS::ObjectState> ("uvs");
+    for (Int32 vertexId : contour) {
+        if (vertexId < 0 || vertexId >= static_cast<Int32> (localVertices.GetSize ())) {
+            return APIERR_GENERAL;
+        }
+        API_TexCoordPars texCoordPars = faceTexCoordPars;
+        texCoordPars.surfacePoint = localVertices[vertexId];
+        API_UVCoord uvCoord = {};
+        const GSErrCode err = ACAPI_ModelAccess_GetTextureCoord (&texCoordPars, &uvCoord);
+        if (err != NoError) {
+            return err;
+        }
+        vertexIds (vertexId);
+        uvs (GS::ObjectState ("u", uvCoord.u, "v", uvCoord.v));
+    }
+    return NoError;
+}
+
+// The texture coordinates at every vertex of every face of the element's own 3D model, body by body
+// and face by face exactly as CollectSolidBodies answers them for Get3DGeometryOfElements (the same
+// bodies, faces and vertexIds), so the two answers can be joined by index. nSolidBodies gets the
+// number of solid bodies. ACAPI_ModelAccess_GetTextureCoord identifies a body by the 0-based element
+// and body indices of its header (minus one, as in the DevKit's 3D_Test example), so a body whose
+// header has none gets an error item. The faces of a body are read first and their texture
+// coordinates asked for afterwards, so that no texture lookup comes between the component reads,
+// which go to the body fetched last.
+static GSErrCode CollectTextureCoordinates (const API_Elem_Head& elemHead, bool includeVertices, FaceMaterials& materials, GS::Array<GS::ObjectState>& bodies, Int32& nSolidBodies)
+{
+    nSolidBodies = 0;
+
     API_ElemInfo3D info3D = {};
     GSErrCode err = ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
     if (err != NoError) {
@@ -8622,6 +8846,7 @@ static GSErrCode CollectTextureCoordinates (const API_Elem_Head& elemHead, GS::A
         if (component.body.nPgon == 0) { // Skip non-solid bodies
             continue;
         }
+        ++nSolidBodies;
 
         const API_BodyType body = component.body;
         const Int32 elemIdx = static_cast<Int32> (body.head.elemIndex) - 1;
@@ -8631,62 +8856,68 @@ static GSErrCode CollectTextureCoordinates (const API_Elem_Head& elemHead, GS::A
             continue;
         }
 
-        GS::ObjectState bodyOS;
-        const auto& polygons = bodyOS.AddList<GS::ObjectState> ("polygons");
-        for (Int32 iPgon = 1; iPgon <= body.nPgon; ++iPgon) {
-            component.header.typeID = API_PgonID;
-            component.header.index = iPgon;
-            err = ACAPI_ModelAccess_GetComponent (&component);
-            if (err != NoError) {
-                polygons (CreateErrorResponse (err, "Failed to get the face."));
-                continue;
-            }
-            const API_PgonType pgon = component.pgon;
-
-            component.header.typeID = API_PedgID;
-            component.header.index = pgon.fpedg;
-            err = ACAPI_ModelAccess_GetComponent (&component);
-            const Int32 pedg = component.pedg.pedg;
-            if (err != NoError || pedg == 0) {
-                polygons (CreateErrorResponse (err != NoError ? err : APIERR_GENERAL, "Failed to get the first edge of the face."));
-                continue;
-            }
-            component.header.typeID = API_EdgeID;
-            component.header.index = pedg > 0 ? pedg : -pedg;
-            err = ACAPI_ModelAccess_GetComponent (&component);
-            if (err != NoError) {
-                polygons (CreateErrorResponse (err, "Failed to get the first edge of the face."));
-                continue;
-            }
-            const Int32 vertexIndex = pedg > 0 ? component.edge.vert1 : component.edge.vert2;
+        GS::Array<API_Coord3D> localVertices;
+        for (Int32 iVert = 1; iVert <= body.nVert; ++iVert) {
             component.header.typeID = API_VertID;
-            component.header.index = vertexIndex > 0 ? vertexIndex : -vertexIndex;
-            err = ACAPI_ModelAccess_GetComponent (&component);
-            if (err != NoError) {
-                polygons (CreateErrorResponse (err, "Failed to get the first vertex of the face."));
-                continue;
+            component.header.index = iVert;
+            API_Coord3D vertex = { 0.0, 0.0, 0.0 };
+            if (ACAPI_ModelAccess_GetComponent (&component) == NoError) {
+                vertex = { component.vert.x, component.vert.y, component.vert.z };
             }
-            // The body's own coordinates, as the DevKit's 3D_Test example passes them.
-            const API_Coord3D vert = { component.vert.x, component.vert.y, component.vert.z };
+            localVertices.Push (vertex);
+        }
 
-            API_TexCoordPars texCoordPars = {};
-            texCoordPars.elemIdx = static_cast<UInt32> (elemIdx);
-            texCoordPars.bodyIdx = static_cast<UInt32> (bodyIdx);
-            texCoordPars.pgonIndex = static_cast<UInt32> (iPgon);
-            texCoordPars.surfacePoint.x = vert.x;
-            texCoordPars.surfacePoint.y = vert.y;
-            texCoordPars.surfacePoint.z = vert.z;
-            API_UVCoord uvCoord = {};
-            err = ACAPI_ModelAccess_GetTextureCoord (&texCoordPars, &uvCoord);
+        struct Face {
+            Int32                           pgonIndex;
+            Int32                           iumat;
+            GS::Array<GS::Array<Int32>>     contours;
+        };
+        GS::Array<Face> faces;
+        for (Int32 iPgon = 1; iPgon <= body.nPgon; ++iPgon) {
+            API_PgonType pgon = {};
+            GS::Array<GS::Array<Int32>> contours;
+            if (GetFaceContours (iPgon, pgon, contours)) {
+                faces.Push (Face { iPgon, pgon.iumat, contours });
+            }
+        }
+
+        GS::ObjectState bodyOS;
+        if (includeVertices) {
+            const auto& vertices = bodyOS.AddList<GS::ObjectState> ("vertices");
+            for (const API_Coord3D& vertex : localVertices) {
+                vertices (Create3DCoordinateObjectState (TransformBodyVertex (body.tranmat, vertex.x, vertex.y, vertex.z)));
+            }
+        }
+
+        const auto& polygons = bodyOS.AddList<GS::ObjectState> ("polygons");
+        for (const Face& face : faces) {
+            API_TexCoordPars faceTexCoordPars = {};
+            faceTexCoordPars.elemIdx = static_cast<UInt32> (elemIdx);
+            faceTexCoordPars.bodyIdx = static_cast<UInt32> (bodyIdx);
+            faceTexCoordPars.pgonIndex = static_cast<UInt32> (face.pgonIndex);
+
+            GS::ObjectState polygonOS;
+            err = AddContourTextureCoordinates (faceTexCoordPars, face.contours[0], localVertices, polygonOS);
+            if (err == NoError && face.contours.GetSize () > 1) {
+                const auto& holes = polygonOS.AddList<GS::ObjectState> ("holes");
+                for (UIndex h = 1; h < face.contours.GetSize () && err == NoError; ++h) {
+                    if (face.contours[h].GetSize () < 3) {
+                        continue;
+                    }
+                    GS::ObjectState holeOS;
+                    err = AddContourTextureCoordinates (faceTexCoordPars, face.contours[h], localVertices, holeOS);
+                    holes (holeOS);
+                }
+            }
             if (err != NoError) {
                 polygons (CreateErrorResponse (err, "Failed to get the texture coordinates of the face."));
                 continue;
             }
 
-            GS::ObjectState polygonOS;
-            polygonOS.Add ("point", Create3DCoordinateObjectState (TransformBodyVertex (body.tranmat, vert.x, vert.y, vert.z)));
-            polygonOS.Add ("u", uvCoord.u);
-            polygonOS.Add ("v", uvCoord.v);
+            const GS::Optional<Int32> materialIndex = GetFaceMaterialIndex (face.iumat, materials);
+            if (materialIndex.HasValue ()) {
+                polygonOS.Add ("materialIndex", materialIndex.Get ());
+            }
             polygons (polygonOS);
         }
 
@@ -8713,6 +8944,10 @@ GS::Optional<GS::UniString> GetTextureCoordinatesCommand::GetInputParametersSche
         "properties": {
             "elements": {
                 "$ref": "#/Elements"
+            },
+            "includeVertices": {
+                "type": "boolean",
+                "description": "Optional. When true, each body also lists its vertices in world coordinates, the same as Get3DGeometryOfElements answers, so the response alone is enough to draw the textured faces. Default value is false."
             }
         },
         "additionalProperties": false,
@@ -8729,7 +8964,7 @@ GS::Optional<GS::UniString> GetTextureCoordinatesCommand::GetRawResponseSchema (
         "properties": {
             "textureCoordinates": {
                 "type": "array",
-                "description": "The texture coordinates of each element, aligned with the input: per solid body of its 3D model, or an error.",
+                "description": "The texture coordinates of each element, aligned with the input: per body, per face and per vertex of its 3D model, or an error.",
                 "items": {
                     "oneOf": [
                         {
@@ -8737,38 +8972,102 @@ GS::Optional<GS::UniString> GetTextureCoordinatesCommand::GetRawResponseSchema (
                             "properties": {
                                 "bodies": {
                                     "type": "array",
-                                    "description": "The solid bodies of the element's own 3D model, in Archicad's order, or an error for a body without texture information. Empty (or an error item instead) when the element has no solid 3D model of its own (the bodies of a Stair, Railing or Curtain Wall, and of the segments of a Column or Beam, belong to their subelements, which can be given instead).",
+                                    "description": "The solid bodies of the element's 3D model, the same and in the same order as the bodies Get3DGeometryOfElements answers: including those of its subelements for a Stair, Railing or Curtain Wall, and of its segments for a Column or Beam. A subelement can also be given on its own. A body without texture information is an error item. Empty when the element has no solid 3D model.",
                                     "items": {
                                         "oneOf": [
                                             {
                                                 "type": "object",
                                                 "properties": {
+                                                    "vertices": {
+                                                        "type": "array",
+                                                        "description": "With includeVertices: true, the vertices of the body in world coordinates, as in Get3DGeometryOfElements.",
+                                                        "items": {
+                                                            "$ref": "#/Coordinate3D"
+                                                        }
+                                                    },
                                                     "polygons": {
                                                         "type": "array",
-                                                        "description": "One item per face of the body, in Archicad's order: the texture coordinates at the first vertex of the face, or an error.",
+                                                        "description": "The faces of the body, the same and in the same order as the polygons Get3DGeometryOfElements answers for it, or an error item for a face whose texture coordinates cannot be read.",
                                                         "items": {
                                                             "oneOf": [
                                                                 {
                                                                     "type": "object",
                                                                     "properties": {
-                                                                        "point": {
-                                                                            "$ref": "#/Coordinate3D",
-                                                                            "description": "The first vertex of the face, in world coordinates."
+                                                                        "vertexIds": {
+                                                                            "type": "array",
+                                                                            "description": "The outer contour of the face as 0-based indices of the body's vertices, the same as in Get3DGeometryOfElements.",
+                                                                            "items": {
+                                                                                "type": "integer"
+                                                                            }
                                                                         },
-                                                                        "u": {
-                                                                            "type": "number",
-                                                                            "description": "The u texture coordinate at the point."
+                                                                        "uvs": {
+                                                                            "type": "array",
+                                                                            "description": "The texture coordinates at each vertex of vertexIds, in the same order, as Archicad computes them for the face: lengths in meters along the axes of the element's texture projection (its placement, rotation and texture projection are in them). The texture of the face's material is not applied: divide by its xSize and ySize and apply its rotationAngle and mirroring to get positions in the picture.",
+                                                                            "items": {
+                                                                                "type": "object",
+                                                                                "properties": {
+                                                                                    "u": {
+                                                                                        "type": "number"
+                                                                                    },
+                                                                                    "v": {
+                                                                                        "type": "number"
+                                                                                    }
+                                                                                },
+                                                                                "additionalProperties": false,
+                                                                                "required": [
+                                                                                    "u",
+                                                                                    "v"
+                                                                                ]
+                                                                            }
                                                                         },
-                                                                        "v": {
-                                                                            "type": "number",
-                                                                            "description": "The v texture coordinate at the point."
+                                                                        "holes": {
+                                                                            "type": "array",
+                                                                            "description": "The holes of the face, as in Get3DGeometryOfElements, with the texture coordinates at their vertices.",
+                                                                            "items": {
+                                                                                "type": "object",
+                                                                                "properties": {
+                                                                                    "vertexIds": {
+                                                                                        "type": "array",
+                                                                                        "items": {
+                                                                                            "type": "integer"
+                                                                                        }
+                                                                                    },
+                                                                                    "uvs": {
+                                                                                        "type": "array",
+                                                                                        "items": {
+                                                                                            "type": "object",
+                                                                                            "properties": {
+                                                                                                "u": {
+                                                                                                    "type": "number"
+                                                                                                },
+                                                                                                "v": {
+                                                                                                    "type": "number"
+                                                                                                }
+                                                                                            },
+                                                                                            "additionalProperties": false,
+                                                                                            "required": [
+                                                                                                "u",
+                                                                                                "v"
+                                                                                            ]
+                                                                                        }
+                                                                                    }
+                                                                                },
+                                                                                "additionalProperties": false,
+                                                                                "required": [
+                                                                                    "vertexIds",
+                                                                                    "uvs"
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        "materialIndex": {
+                                                                            "type": "integer",
+                                                                            "description": "The material of the face: an index into the element's materials. Left out when the face refers to none."
                                                                         }
                                                                     },
                                                                     "additionalProperties": false,
                                                                     "required": [
-                                                                        "point",
-                                                                        "u",
-                                                                        "v"
+                                                                        "vertexIds",
+                                                                        "uvs"
                                                                     ]
                                                                 },
                                                                 {
@@ -8788,11 +9087,82 @@ GS::Optional<GS::UniString> GetTextureCoordinatesCommand::GetRawResponseSchema (
                                             }
                                         ]
                                     }
+                                },
+                                "materials": {
+                                    "type": "array",
+                                    "description": "The materials the faces of the element refer to by materialIndex, in the order of their first use.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {
+                                                "type": "string",
+                                                "description": "The name of the material: the name of the surface attribute, or of a material defined by a GDL script."
+                                            },
+                                            "surfaceId": {
+                                                "$ref": "#/AttributeId",
+                                                "description": "The surface attribute the material was made from. Left out for a material defined by a GDL script."
+                                            },
+                                            "texture": {
+                                                "type": "object",
+                                                "description": "The texture of the material. Left out when it has none.",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string",
+                                                        "description": "The name of the texture picture, as in GetSurfaces (without the file extension)."
+                                                    },
+                                                    "filePath": {
+                                                        "type": "string",
+                                                        "description": "Where Archicad found the picture. It can be inside a library container (.lcf), which is not a folder on disk. Left out when Archicad gives no location."
+                                                    },
+                                                    "xSize": {
+                                                        "type": "number",
+                                                        "description": "The width of the picture in model space."
+                                                    },
+                                                    "ySize": {
+                                                        "type": "number",
+                                                        "description": "The height of the picture in model space."
+                                                    },
+                                                    "rotationAngle": {
+                                                        "type": "number",
+                                                        "description": "The rotation of the texture, as GetSurfaces gives it (in degrees on Archicad 30, although the DevKit documents radians)."
+                                                    },
+                                                    "mirrorX": {
+                                                        "type": "boolean"
+                                                    },
+                                                    "mirrorY": {
+                                                        "type": "boolean"
+                                                    },
+                                                    "FillRectangle": {
+                                                        "type": "boolean"
+                                                    },
+                                                    "FitPicture": {
+                                                        "type": "boolean"
+                                                    }
+                                                },
+                                                "additionalProperties": false,
+                                                "required": [
+                                                    "name",
+                                                    "xSize",
+                                                    "ySize",
+                                                    "rotationAngle",
+                                                    "mirrorX",
+                                                    "mirrorY",
+                                                    "FillRectangle",
+                                                    "FitPicture"
+                                                ]
+                                            }
+                                        },
+                                        "additionalProperties": false,
+                                        "required": [
+                                            "name"
+                                        ]
+                                    }
                                 }
                             },
                             "additionalProperties": false,
                             "required": [
-                                "bodies"
+                                "bodies",
+                                "materials"
                             ]
                         },
                         {
@@ -8813,9 +9183,20 @@ GS::ObjectState GetTextureCoordinatesCommand::Execute (const GS::ObjectState& pa
 {
     GS::Array<GS::ObjectState> elements;
     parameters.Get ("elements", elements);
+    bool includeVertices = false;
+    parameters.Get ("includeVertices", includeVertices);
 
     GS::ObjectState response;
     const auto& textureCoordinates = response.AddList<GS::ObjectState> ("textureCoordinates");
+
+    API_DatabaseInfo previousDatabase = {};
+    bool databaseSwitched = false;
+    const GS::OnExit restoreDatabase ([&]() {
+        if (databaseSwitched) {
+            ACAPI_Database_ChangeCurrentDatabase (&previousDatabase);
+        }
+    });
+    SwitchToDatabaseWith3DModel (previousDatabase, databaseSwitched);
 
     for (const GS::ObjectState& element : elements) {
         const GS::ObjectState* elementId = element.Get ("elementId");
@@ -8832,8 +9213,18 @@ GS::ObjectState GetTextureCoordinatesCommand::Execute (const GS::ObjectState& pa
             continue;
         }
 
+        FaceMaterials materials;
         GS::Array<GS::ObjectState> bodies;
-        err = CollectTextureCoordinates (elemHead, bodies);
+        Int32 nSolidBodies = 0;
+        err = CollectTextureCoordinates (elemHead, includeVertices, materials, bodies, nSolidBodies);
+        GS::Array<API_Elem_Head> subelements;
+        if (GetSubelementsWithBodies (elemHead, nSolidBodies > 0, subelements)) {
+            // A Stair answers Get3DInfo with nothing; its subelements' bodies are the answer.
+            err = NoError;
+            for (const API_Elem_Head& subelement : subelements) {
+                CollectTextureCoordinates (subelement, includeVertices, materials, bodies, nSolidBodies);
+            }
+        }
         if (err != NoError) {
             textureCoordinates (CreateErrorResponse (err, "Failed to get the 3D model of the element"));
             continue;
@@ -8843,6 +9234,10 @@ GS::ObjectState GetTextureCoordinatesCommand::Execute (const GS::ObjectState& pa
         const auto& bodiesList = textureCoordinatesOfElement.AddList<GS::ObjectState> ("bodies");
         for (const GS::ObjectState& body : bodies) {
             bodiesList (body);
+        }
+        const auto& materialsList = textureCoordinatesOfElement.AddList<GS::ObjectState> ("materials");
+        for (const GS::ObjectState& material : materials.materials) {
+            materialsList (material);
         }
         textureCoordinates (textureCoordinatesOfElement);
     }
