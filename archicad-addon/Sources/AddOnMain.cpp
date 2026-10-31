@@ -273,7 +273,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<StartUserInputCommand> (
             applicationCommands, "1.7.4",
-            "Starts GetPointFromUser, GetElementFromUser, GetLineFromUser or GetPolygonFromUser and answers at once with an inputId, instead of keeping the JSON command open until the click. The result is pushed to the notification clients registered with notifyOnUserInput (SetElementNotificationClient) when the input ends, and GetUserInputResult returns it afterwards. While Archicad waits for the user, it refuses every JSON command at once with error 4001 (\"ongoing user input\") instead of queueing it; an optional timeout cancels the input, as Escape would. One input at a time."
+            "Starts GetPointFromUser, GetElementFromUser, GetLineFromUser or GetPolygonFromUser and answers at once with an inputId, instead of keeping the JSON command open until the click. The result is pushed to the notification clients registered with notifyOnUserInput (SetElementNotificationClient) when the input ends, and GetUserInputResult returns it afterwards. While Archicad waits for the user, it refuses every JSON command at once with error 4001 ('ongoing user input') instead of queueing it; an optional timeout cancels the input, as Escape would. One input at a time."
         );
         err |= RegisterCommand<GetUserInputResultCommand> (
             applicationCommands, "1.7.4",
