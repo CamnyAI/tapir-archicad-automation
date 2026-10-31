@@ -1,0 +1,115 @@
+{
+  "title": "SetSectionsAndElevationsDetails renames a section and an elevation, and their Project Map viewpoints (#995)",
+  "minTapir": "1.7.2",
+  "steps": [
+    {
+      "id": "floor plan",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": { "windowType": "FloorPlan" }
+    },
+    {
+      "id": "template sections",
+      "command": "GetElementsByType",
+      "creates": false,
+      "params": { "elementType": "CutPlane" },
+      "save": { "sections": "elements" }
+    },
+    {
+      "id": "remove them, so the Project Map lists only the checked ones",
+      "command": "DeleteElements",
+      "creates": false,
+      "params": { "elements": "${sections}" }
+    },
+    {
+      "id": "template elevations",
+      "command": "GetElementsByType",
+      "creates": false,
+      "params": { "elementType": "Elevation" },
+      "save": { "elevations": "elements" }
+    },
+    {
+      "id": "remove them too",
+      "command": "DeleteElements",
+      "creates": false,
+      "params": { "elements": "${elevations}" }
+    },
+    {
+      "id": "section",
+      "command": "CreateSections",
+      "params": {
+        "sectionsData": [
+          { "startCoordinate": { "x": 700, "y": 700 }, "endCoordinate": { "x": 708, "y": 700 }, "name": "TapirCheck section" }
+        ]
+      },
+      "save": { "s1": "elements[0].elementId.guid" }
+    },
+    {
+      "id": "elevation",
+      "command": "CreateElevations",
+      "params": {
+        "elevationsData": [
+          { "startCoordinate": { "x": 700, "y": 690 }, "endCoordinate": { "x": 708, "y": 690 }, "name": "TapirCheck elevation" }
+        ]
+      },
+      "save": { "e1": "elements[0].elementId.guid" }
+    },
+    {
+      "id": "rename both, with a pen change on the elevation",
+      "command": "SetSectionsAndElevationsDetails",
+      "creates": false,
+      "params": {
+        "elementsWithDetails": [
+          { "elementId": { "guid": "${s1}" }, "details": { "name": "TapirCheck renamed section", "referenceId": "TC-S1" } },
+          { "elementId": { "guid": "${e1}" }, "details": { "name": "TapirCheck renamed elevation", "referenceId": "TC-E1", "linePenIndex": 7 } }
+        ]
+      },
+      "expect": [
+        { "path": "executionResults[0].success", "eq": true, "name": "section renamed" },
+        { "path": "executionResults[1].success", "eq": true, "name": "elevation renamed" }
+      ]
+    },
+    {
+      "id": "read back the elements",
+      "command": "GetSectionsAndElevationsDetails",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${s1}" } }, { "elementId": { "guid": "${e1}" } } ] },
+      "expect": [
+        { "path": "detailsOfElements[0].name", "eq": "TapirCheck renamed section" },
+        { "path": "detailsOfElements[0].referenceId", "eq": "TC-S1" },
+        { "path": "detailsOfElements[1].name", "eq": "TapirCheck renamed elevation" },
+        { "path": "detailsOfElements[1].referenceId", "eq": "TC-E1" },
+        { "path": "detailsOfElements[1].linePenIndex", "eq": 7 }
+      ]
+    },
+    {
+      "id": "read back the Project Map viewpoints",
+      "command": "API.GetNavigatorItemTree",
+      "creates": false,
+      "params": { "navigatorTreeId": { "type": "ProjectMap" } },
+      "expect": [
+        { "path": "navigatorTree.rootItem.children[0].navigatorItem.children[1].navigatorItem.children[*].navigatorItem.prefix", "eq": ["TC-S1"], "name": "Sections folder: reference ID" },
+        { "path": "navigatorTree.rootItem.children[0].navigatorItem.children[1].navigatorItem.children[*].navigatorItem.name", "eq": ["TapirCheck renamed section"], "name": "Sections folder: name" },
+        { "path": "navigatorTree.rootItem.children[0].navigatorItem.children[2].navigatorItem.children[*].navigatorItem.prefix", "eq": ["TC-E1"], "name": "Elevations folder: reference ID" },
+        { "path": "navigatorTree.rootItem.children[0].navigatorItem.children[2].navigatorItem.children[*].navigatorItem.name", "eq": ["TapirCheck renamed elevation"], "name": "Elevations folder: name" }
+      ]
+    },
+    {
+      "id": "rename again, name only",
+      "command": "SetSectionsAndElevationsDetails",
+      "creates": false,
+      "params": { "elementsWithDetails": [ { "elementId": { "guid": "${s1}" }, "details": { "name": "TapirCheck second name" } } ] },
+      "expect": [ { "path": "executionResults[0].success", "eq": true } ]
+    },
+    {
+      "id": "the reference ID stays",
+      "command": "GetSectionsAndElevationsDetails",
+      "creates": false,
+      "params": { "elements": [ { "elementId": { "guid": "${s1}" } } ] },
+      "expect": [
+        { "path": "detailsOfElements[0].name", "eq": "TapirCheck second name" },
+        { "path": "detailsOfElements[0].referenceId", "eq": "TC-S1" }
+      ]
+    }
+  ]
+}

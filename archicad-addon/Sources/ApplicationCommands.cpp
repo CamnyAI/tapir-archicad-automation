@@ -806,6 +806,15 @@ GS::ObjectState ChangeWindowCommand::Execute (const GS::ObjectState& parameters,
 
     if (databaseId != nullptr) {
         API_DatabaseInfo targetDatabase = DatabaseIdResolver::Instance ().GetDatabaseWithId (GetGuidFromObjectState (*databaseId));
+        if (targetDatabase.typeID == API_ZombieWindowID) {
+            // GetDatabaseWithId only recognizes the FloorPlan/3DModel sentinel guids; for
+            // every other database kind (Section, Elevation, InteriorElevation, Detail,
+            // Worksheet...) it leaves typeID unset and only fills databaseUnId.elemSetId,
+            // which makes ACAPI_Window_GetDatabaseInfo fail with APIERR_BADDATABASE. Seed
+            // the type we already know from windowType, the same way DocumentCreationCommands
+            // does for Layout/MasterLayout before calling ACAPI_Window_GetDatabaseInfo.
+            targetDatabase.typeID = windowInfo.typeID;
+        }
         GSErrCode err = ACAPI_Window_GetDatabaseInfo (&targetDatabase);
         if (err != NoError) {
             return CreateErrorResponse (err, "Failed to resolve target database.");
@@ -831,7 +840,15 @@ GS::ObjectState ChangeWindowCommand::Execute (const GS::ObjectState& parameters,
                     : CreateErrorResponse (goToViewErr, "Failed to change current database, and failed to open the database's Project Map item.");
             }
 #endif
-            return CreateErrorResponse (err, "Failed to change current database.");
+            // A viewpoint whose window was never opened (e.g. an Elevation just created with
+            // CreateElevations) has no database to switch to yet: ChangeCurrentDatabase fails
+            // with APIERR_BADDATABASE until the window exists. Open the window first, then retry.
+            if (ACAPI_Window_ChangeWindow (&targetDatabase) == NoError) {
+                err = ACAPI_Database_ChangeCurrentDatabase (&targetDatabase);
+            }
+            if (err != NoError) {
+                return CreateErrorResponse (err, "Failed to change current database.");
+            }
         }
 
         windowInfo = targetDatabase;

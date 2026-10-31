@@ -9458,6 +9458,562 @@ GS::ObjectState ModifyMorphsCommand::Execute (const GS::ObjectState& parameters,
     });
 }
 
+static const char* HorizontalRangeToString (API_SegmentHorizontalRange r)
+{
+    switch (r) {
+        case APIHorRange_Limited:   return "Limited";
+        case APIHorRange_ZeroDepth: return "ZeroDepth";
+        default:                    return "Infinite";
+    }
+}
+
+static API_SegmentHorizontalRange StringToHorizontalRange (const GS::UniString& s)
+{
+    if (s == "Limited")   return APIHorRange_Limited;
+    if (s == "ZeroDepth") return APIHorRange_ZeroDepth;
+    return APIHorRange_Infinite;
+}
+
+static const char* VerticalRangeToString (API_SegmentVerticalRange r)
+{
+    switch (r) {
+        case APIVerRange_Limited:        return "Limited";
+        case APIVerRange_FitToZoneRange: return "FitToZoneRange";
+        default:                         return "Infinite";
+    }
+}
+
+static API_SegmentVerticalRange StringToVerticalRange (const GS::UniString& s)
+{
+    if (s == "Limited")        return APIVerRange_Limited;
+    if (s == "FitToZoneRange") return APIVerRange_FitToZoneRange;
+    return APIVerRange_Infinite;
+}
+
+static const char* UncutSurfaceFillTypeToString (API_CutPlaneUncutSurfaceFillID t)
+{
+    switch (t) {
+        case APICutPl_MaterialColorShaded:    return "MaterialColorShaded";
+        case APICutPl_MaterialColorNonShaded: return "MaterialColorNonShaded";
+        default:                              return "PenColor";
+    }
+}
+
+static API_CutPlaneUncutSurfaceFillID StringToUncutSurfaceFillType (const GS::UniString& s)
+{
+    if (s == "MaterialColorShaded")    return APICutPl_MaterialColorShaded;
+    if (s == "MaterialColorNonShaded") return APICutPl_MaterialColorNonShaded;
+    return APICutPl_PenColor;
+}
+
+static const char* StoryHandleAppearanceToString (API_StoryHandleAppearance a)
+{
+    switch (a) {
+        case APICutPl_SHADisplayOnly: return "DisplayOnly";
+        case APICutPl_SHAAll:         return "All";
+        default:                      return "None";
+    }
+}
+
+static API_StoryHandleAppearance StringToStoryHandleAppearance (const GS::UniString& s)
+{
+    if (s == "DisplayOnly") return APICutPl_SHADisplayOnly;
+    if (s == "All")         return APICutPl_SHAAll;
+    return APICutPl_SHANone;
+}
+
+static const char* BoundaryDisplayToString (API_BoundaryDisplay b)
+{
+    switch (b) {
+        case APIBound_NoContours:       return "NoContours";
+        case APIBound_OverrideContours: return "OverrideContours";
+        default:                        return "UncutContours";
+    }
+}
+
+static API_BoundaryDisplay StringToBoundaryDisplay (const GS::UniString& s)
+{
+    if (s == "NoContours")       return APIBound_NoContours;
+    if (s == "OverrideContours") return APIBound_OverrideContours;
+    return APIBound_UncutContours;
+}
+
+static const char* CutPlaneShowTypeToString (API_CutPlaneShowType t)
+{
+    switch (t) {
+        case APICutPl_ShowOnOneStory: return "OneStory";
+        case APICutPl_ShowInRange:    return "InRange";
+        case APICutPl_ShowPartRange:  return "PartRange";
+        default:                      return "All";
+    }
+}
+
+static API_CutPlaneShowType StringToCutPlaneShowType (const GS::UniString& s)
+{
+    if (s == "OneStory")  return APICutPl_ShowOnOneStory;
+    if (s == "InRange")   return APICutPl_ShowInRange;
+    if (s == "PartRange") return APICutPl_ShowPartRange;
+    return APICutPl_ShowAll;
+}
+
+static const char* PlanConnToString (API_CutPlanePlanConn c)
+{
+    switch (c) {
+        case APICutPl_Offline: return "Offline";
+        case APICutPl_Drawing: return "Drawing";
+        default:                return "Online";
+    }
+}
+
+static API_CutPlanePlanConn StringToPlanConn (const GS::UniString& s)
+{
+    if (s == "Offline") return APICutPl_Offline;
+    if (s == "Drawing") return APICutPl_Drawing;
+    return APICutPl_Online;
+}
+
+static void AddSectionElevationDetails (GS::ObjectState& os, const API_CutPlaneType& cutPlane, bool includeReadOnly)
+{
+    const API_SectionSegment& seg = cutPlane.segment;
+
+    os.Add ("name", GS::UniString (seg.cutPlName));
+    os.Add ("referenceId", GS::UniString (seg.cutPlIdStr));
+    os.Add ("linePenIndex", seg.linePen);
+    os.Add ("textPenIndex", seg.textPen);
+    os.Add ("lineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, seg.ltypeInd)));
+    os.Add ("sectionLinePenIndex", seg.sectPen);
+    os.Add ("sectionFillPenIndex", seg.sectFillPen);
+    os.Add ("sectionFillBackgroundPenIndex", seg.sectFillBGPen);
+    os.Add ("horizontalRange", HorizontalRangeToString (seg.horizRange));
+    os.Add ("verticalRange", VerticalRangeToString (seg.vertRange));
+    os.Add ("verticalRangeStoryBaseNumber", seg.verticalRangeStoryBaseNumber);
+    os.Add ("relativeToStory", seg.relativeToStory);
+    os.Add ("verticalRangeMin", seg.vertMin);
+    os.Add ("verticalRangeMax", seg.vertMax);
+    os.Add ("markerSize", seg.markerSize);
+    os.Add ("showMarkerAtBeginning", seg.begMark);
+    os.Add ("showMarkerAtEnd", seg.endMark);
+    os.Add ("useElementPens", seg.useElemPens);
+    os.Add ("showLineAtBeginning", seg.begLine);
+    os.Add ("showLineAtMiddle", seg.middleLine);
+    os.Add ("showLineAtEnd", seg.endLine);
+    os.Add ("textSize", seg.textSize);
+    os.Add ("fontIndex", seg.font);
+    os.Add ("effectVectorHatch", (seg.effectBits & APICutPl_VectorHatch) != 0);
+    os.Add ("effectVectorShadow", (seg.effectBits & APICutPl_VectorShadow) != 0);
+    os.Add ("effectSunFrom3D", (seg.effectBits & APICutPl_SunFrom3D) != 0);
+    os.Add ("shadowFillId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_FilltypeID, seg.shadFill)));
+    os.Add ("shadowFillPenIndex", seg.shadFillPen);
+    os.Add ("shadowFillBackgroundPenIndex", seg.shadFillBGPen);
+    os.Add ("limitLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, seg.limitLtypeInd)));
+    os.Add ("limitLinePenIndex", seg.limitLinePen);
+    os.Add ("continuous", seg.continuous);
+    os.Add ("sunAzimuth", seg.sunAngXY);
+    os.Add ("sunAltitude", seg.sunAngZ);
+    os.Add ("useOneModelPen", seg.modelUseElemPen);
+    os.Add ("modelPenIndex", seg.modelElemPen);
+    os.Add ("modelUncutSurfaceFillType", UncutSurfaceFillTypeToString (seg.modelUncutSurfFillType));
+    os.Add ("modelUncutSurfaceFillBackgroundPenIndex", seg.modelUncutSurfBGPen);
+    os.Add ("useUncutSurfaceFill", seg.modelUseUncutSurfFill);
+    os.Add ("transparent", seg.transparency);
+    os.Add ("markedDistantArea", seg.markedDistArea);
+    os.Add ("useOneDistantAreaPen", seg.distAreaUseElemPen);
+    os.Add ("distantAreaPenIndex", seg.distAreaElemPen);
+    os.Add ("distantAreaShadowFillId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_FilltypeID, seg.distAreaShadFill)));
+    os.Add ("distantAreaShadowFillPenIndex", seg.distAreaShadFillPen);
+    os.Add ("distantAreaShadowFillBackgroundPenIndex", seg.distAreaShadFillBGPen);
+    os.Add ("distantAreaUncutSurfaceFillType", UncutSurfaceFillTypeToString (seg.distAreaUncutSurfFillType));
+    os.Add ("distantAreaUncutSurfaceFillBackgroundPenIndex", seg.distAreaUncutSurfBGPen);
+    os.Add ("useUncutSurfaceFillInDistantArea", seg.distAreaUseUncutSurfFill);
+    os.Add ("storyHandleAppearance", StoryHandleAppearanceToString (seg.shAppearance));
+    os.Add ("storyHandleLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, seg.shLineType)));
+    os.Add ("storyHandleLinePenIndex", seg.shLinePen);
+    os.Add ("storyHandleMarkerPenIndex", seg.shMarkerPen);
+    os.Add ("storyHandleUseSymbolPens", seg.shUseSymbolPens);
+    os.Add ("storyHandleLeftMarkerVisible", seg.shLeftMarkerOn);
+    os.Add ("storyHandleRightMarkerVisible", seg.shRightMarkerOn);
+    os.Add ("storyHandleLineVisible", seg.shLineOn);
+    os.Add ("storyHandleLeftMarkerOffset", seg.shLeftMarkerOffset);
+    os.Add ("storyHandleRightMarkerOffset", seg.shRightMarkerOffset);
+    os.Add ("storyHandleMarkerFontIndex", seg.shMarkerFont);
+    os.Add ("storyHandleMarkerTextSize", seg.shMarkerTextSize);
+    os.Add ("storyHandleMarkerSize", seg.shMarkerSize);
+    os.Add ("boundaryDisplayMode", BoundaryDisplayToString (seg.boundaryDisplay));
+    os.Add ("boundaryPenIndex", seg.boundaryPen);
+    os.Add ("boundaryLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, seg.boundaryLineType)));
+    os.Add ("showOnStories", CutPlaneShowTypeToString (cutPlane.cutPlShow));
+    os.Add ("storyToShowOn", cutPlane.storyToShowOn);
+    os.Add ("markerShowType", cutPlane.markerShow == APICutPl_ShowWingMarkers ? GS::UniString ("WingMarkers") : GS::UniString ("MiddleMarker"));
+    os.Add ("intendedPlanConnectivity", PlanConnToString (seg.intPlanConn));
+
+    if (includeReadOnly) {
+        os.Add ("currentPlanConnectivity", PlanConnToString (seg.currPlanConn));
+        os.Add ("isWindowOpened", seg.windOpened);
+        os.Add ("isActive", seg.active);
+        os.Add ("isSourceMarker", seg.sourceMarker);
+        os.Add ("isInDrawingMode", seg.drawingModeON);
+        os.Add ("beginMarkerElementId", CreateElementIdObjectState (seg.begMarkerId));
+        os.Add ("middleMarkerElementId", CreateElementIdObjectState (seg.midMarkerId));
+        os.Add ("endMarkerElementId", CreateElementIdObjectState (seg.endMarkerId));
+    }
+}
+
+// Applies every field present in 'details' onto cutPlane. Returns an error for an attribute guid
+// that does not name an attribute of the expected type. When mask is non-null, also sets the
+// corresponding ACAPI_ELEMENT_MASK_SET bit (needed for ACAPI_Element_Change; not needed when
+// preparing a brand new element for ACAPI_Element_CreateExt, which always writes the full struct).
+static GS::Optional<GS::UniString> ApplySectionElevationSettableDetails (const GS::ObjectState& details, API_CutPlaneType& cutPlane, API_Element* mask)
+{
+    API_SectionSegment& seg = cutPlane.segment;
+
+    GS::UniString strVal;
+    if (SetUCharProperty (&details, "name", seg.cutPlName)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.cutPlName);
+    }
+    if (SetUCharProperty (&details, "referenceId", seg.cutPlIdStr)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.cutPlIdStr);
+    }
+    if (details.Get ("linePenIndex", seg.linePen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.linePen);
+    }
+    if (details.Get ("textPenIndex", seg.textPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.textPen);
+    }
+    {
+        auto attrId = GetOptionalObjectState (details, "lineTypeId");
+        if (attrId.HasValue ()) {
+            if (!ResolveAttributeIndex (attrId.Get (), API_LinetypeID, seg.ltypeInd)) {
+                return GS::UniString ("Invalid attribute reference in 'lineTypeId'.");
+            }
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.ltypeInd);
+        }
+    }
+    if (details.Get ("sectionLinePenIndex", seg.sectPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.sectPen);
+    }
+    if (details.Get ("sectionFillPenIndex", seg.sectFillPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.sectFillPen);
+    }
+    if (details.Get ("sectionFillBackgroundPenIndex", seg.sectFillBGPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.sectFillBGPen);
+    }
+    if (details.Get ("horizontalRange", strVal)) {
+        seg.horizRange = StringToHorizontalRange (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.horizRange);
+    }
+    if (details.Get ("verticalRange", strVal)) {
+        seg.vertRange = StringToVerticalRange (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.vertRange);
+    }
+    {
+        Int32 v;
+        if (details.Get ("verticalRangeStoryBaseNumber", v)) {
+            seg.verticalRangeStoryBaseNumber = static_cast<short> (v);
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.verticalRangeStoryBaseNumber);
+        }
+    }
+    if (details.Get ("relativeToStory", seg.relativeToStory)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.relativeToStory);
+    }
+    if (details.Get ("verticalRangeMin", seg.vertMin)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.vertMin);
+    }
+    if (details.Get ("verticalRangeMax", seg.vertMax)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.vertMax);
+    }
+    if (details.Get ("markerSize", seg.markerSize)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.markerSize);
+    }
+    if (details.Get ("showMarkerAtBeginning", seg.begMark)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.begMark);
+    }
+    if (details.Get ("showMarkerAtEnd", seg.endMark)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.endMark);
+    }
+    if (details.Get ("useElementPens", seg.useElemPens)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.useElemPens);
+    }
+    if (details.Get ("showLineAtBeginning", seg.begLine)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.begLine);
+    }
+    if (details.Get ("showLineAtMiddle", seg.middleLine)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.middleLine);
+    }
+    if (details.Get ("showLineAtEnd", seg.endLine)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.endLine);
+    }
+    if (details.Get ("textSize", seg.textSize)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.textSize);
+    }
+    {
+        Int32 v;
+        if (details.Get ("fontIndex", v)) {
+            seg.font = static_cast<short> (v);
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.font);
+        }
+    }
+    {
+        bool hatch = (seg.effectBits & APICutPl_VectorHatch) != 0;
+        bool shadow = (seg.effectBits & APICutPl_VectorShadow) != 0;
+        bool sunFrom3D = (seg.effectBits & APICutPl_SunFrom3D) != 0;
+        bool effectsChanged = false;
+        effectsChanged |= details.Get ("effectVectorHatch", hatch);
+        effectsChanged |= details.Get ("effectVectorShadow", shadow);
+        effectsChanged |= details.Get ("effectSunFrom3D", sunFrom3D);
+        if (effectsChanged) {
+            seg.effectBits = static_cast<short> ((hatch ? APICutPl_VectorHatch : 0) | (shadow ? APICutPl_VectorShadow : 0) | (sunFrom3D ? APICutPl_SunFrom3D : 0));
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.effectBits);
+        }
+    }
+    {
+        auto attrId = GetOptionalObjectState (details, "shadowFillId");
+        if (attrId.HasValue ()) {
+            if (!ResolveAttributeIndex (attrId.Get (), API_FilltypeID, seg.shadFill)) {
+                return GS::UniString ("Invalid attribute reference in 'shadowFillId'.");
+            }
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shadFill);
+        }
+    }
+    if (details.Get ("shadowFillPenIndex", seg.shadFillPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shadFillPen);
+    }
+    if (details.Get ("shadowFillBackgroundPenIndex", seg.shadFillBGPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shadFillBGPen);
+    }
+    {
+        auto attrId = GetOptionalObjectState (details, "limitLineTypeId");
+        if (attrId.HasValue ()) {
+            if (!ResolveAttributeIndex (attrId.Get (), API_LinetypeID, seg.limitLtypeInd)) {
+                return GS::UniString ("Invalid attribute reference in 'limitLineTypeId'.");
+            }
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.limitLtypeInd);
+        }
+    }
+    if (details.Get ("limitLinePenIndex", seg.limitLinePen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.limitLinePen);
+    }
+    if (details.Get ("continuous", seg.continuous)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.continuous);
+    }
+    if (details.Get ("sunAzimuth", seg.sunAngXY)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.sunAngXY);
+    }
+    if (details.Get ("sunAltitude", seg.sunAngZ)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.sunAngZ);
+    }
+    if (details.Get ("useOneModelPen", seg.modelUseElemPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.modelUseElemPen);
+    }
+    if (details.Get ("modelPenIndex", seg.modelElemPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.modelElemPen);
+    }
+    if (details.Get ("modelUncutSurfaceFillType", strVal)) {
+        seg.modelUncutSurfFillType = StringToUncutSurfaceFillType (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.modelUncutSurfFillType);
+    }
+    if (details.Get ("modelUncutSurfaceFillBackgroundPenIndex", seg.modelUncutSurfBGPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.modelUncutSurfBGPen);
+    }
+    if (details.Get ("useUncutSurfaceFill", seg.modelUseUncutSurfFill)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.modelUseUncutSurfFill);
+    }
+    if (details.Get ("transparent", seg.transparency)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.transparency);
+    }
+    if (details.Get ("markedDistantArea", seg.markedDistArea)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.markedDistArea);
+    }
+    if (details.Get ("useOneDistantAreaPen", seg.distAreaUseElemPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.distAreaUseElemPen);
+    }
+    if (details.Get ("distantAreaPenIndex", seg.distAreaElemPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.distAreaElemPen);
+    }
+    // distAreaShadFill / distAreaShadFillPen / distAreaShadFillBGPen / distAreaUncutSurfFillType are
+    // deliberately NOT settable here: confirmed live on Archicad 27 that ACAPI_Element_CreateExt and
+    // ACAPI_Element_Change both silently ignore explicit values for these and instead mirror
+    // shadFill/shadFillPen/shadFillBGPen/PenColor - not a Tapir bug, an Archicad engine limitation.
+    // They are still exposed read-only in SectionElevationDetails (see AddSectionElevationDetails).
+    if (details.Get ("distantAreaUncutSurfaceFillBackgroundPenIndex", seg.distAreaUncutSurfBGPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.distAreaUncutSurfBGPen);
+    }
+    if (details.Get ("useUncutSurfaceFillInDistantArea", seg.distAreaUseUncutSurfFill)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.distAreaUseUncutSurfFill);
+    }
+    if (details.Get ("storyHandleAppearance", strVal)) {
+        seg.shAppearance = StringToStoryHandleAppearance (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shAppearance);
+    }
+    {
+        auto attrId = GetOptionalObjectState (details, "storyHandleLineTypeId");
+        if (attrId.HasValue ()) {
+            if (!ResolveAttributeIndex (attrId.Get (), API_LinetypeID, seg.shLineType)) {
+                return GS::UniString ("Invalid attribute reference in 'storyHandleLineTypeId'.");
+            }
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shLineType);
+        }
+    }
+    if (details.Get ("storyHandleLinePenIndex", seg.shLinePen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shLinePen);
+    }
+    if (details.Get ("storyHandleMarkerPenIndex", seg.shMarkerPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shMarkerPen);
+    }
+    if (details.Get ("storyHandleUseSymbolPens", seg.shUseSymbolPens)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shUseSymbolPens);
+    }
+    if (details.Get ("storyHandleLeftMarkerVisible", seg.shLeftMarkerOn)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shLeftMarkerOn);
+    }
+    if (details.Get ("storyHandleRightMarkerVisible", seg.shRightMarkerOn)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shRightMarkerOn);
+    }
+    if (details.Get ("storyHandleLineVisible", seg.shLineOn)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shLineOn);
+    }
+    if (details.Get ("storyHandleLeftMarkerOffset", seg.shLeftMarkerOffset)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shLeftMarkerOffset);
+    }
+    if (details.Get ("storyHandleRightMarkerOffset", seg.shRightMarkerOffset)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shRightMarkerOffset);
+    }
+    {
+        Int32 v;
+        if (details.Get ("storyHandleMarkerFontIndex", v)) {
+            seg.shMarkerFont = static_cast<short> (v);
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shMarkerFont);
+        }
+    }
+    if (details.Get ("storyHandleMarkerTextSize", seg.shMarkerTextSize)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shMarkerTextSize);
+    }
+    if (details.Get ("storyHandleMarkerSize", seg.shMarkerSize)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.shMarkerSize);
+    }
+    if (details.Get ("boundaryDisplayMode", strVal)) {
+        seg.boundaryDisplay = StringToBoundaryDisplay (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.boundaryDisplay);
+    }
+    if (details.Get ("boundaryPenIndex", seg.boundaryPen)) {
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.boundaryPen);
+    }
+    {
+        auto attrId = GetOptionalObjectState (details, "boundaryLineTypeId");
+        if (attrId.HasValue ()) {
+            if (!ResolveAttributeIndex (attrId.Get (), API_LinetypeID, seg.boundaryLineType)) {
+                return GS::UniString ("Invalid attribute reference in 'boundaryLineTypeId'.");
+            }
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.boundaryLineType);
+        }
+    }
+    if (details.Get ("showOnStories", strVal)) {
+        cutPlane.cutPlShow = StringToCutPlaneShowType (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, cutPlShow);
+    }
+    {
+        Int32 v;
+        if (details.Get ("storyToShowOn", v)) {
+            cutPlane.storyToShowOn = static_cast<short> (v);
+            if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, storyToShowOn);
+        }
+    }
+    if (details.Get ("markerShowType", strVal)) {
+        cutPlane.markerShow = (strVal == "WingMarkers") ? APICutPl_ShowWingMarkers : APICutPl_ShowMiddleMarker;
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, markerShow);
+    }
+    if (details.Get ("intendedPlanConnectivity", strVal)) {
+        seg.intPlanConn = StringToPlanConn (strVal);
+        if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.intPlanConn);
+    }
+
+    return {};
+}
+
+// The fields of 'details' that Archicad did not store: 'requested' is the element with 'details'
+// applied by ApplySectionElevationSettableDetails, 'stored' the element read back after the change.
+// ACAPI_Element_Change returns NoError for a field it leaves untouched, so this read-back is what
+// tells a change that happened from one that did not.
+static GS::Array<GS::UniString> GetUnappliedSectionElevationDetails (const GS::ObjectState& details, const API_CutPlaneType& requested, const API_CutPlaneType& stored)
+{
+    const API_SectionSegment& r = requested.segment;
+    const API_SectionSegment& s = stored.segment;
+    const auto sameDouble = [] (double a, double b) { return std::abs (a - b) <= 1e-6; };
+    const auto sameBit = [&] (short bit) { return (r.effectBits & bit) == (s.effectBits & bit); };
+
+    GS::Array<GS::UniString> unapplied;
+    const auto check = [&] (const char* key, bool same) {
+        if (!same && details.Contains (key)) {
+            unapplied.Push (key);
+        }
+    };
+    check ("name", GS::UniString (r.cutPlName) == GS::UniString (s.cutPlName));
+    check ("referenceId", GS::UniString (r.cutPlIdStr) == GS::UniString (s.cutPlIdStr));
+    check ("linePenIndex", r.linePen == s.linePen);
+    check ("textPenIndex", r.textPen == s.textPen);
+    check ("lineTypeId", r.ltypeInd == s.ltypeInd);
+    check ("sectionLinePenIndex", r.sectPen == s.sectPen);
+    check ("sectionFillPenIndex", r.sectFillPen == s.sectFillPen);
+    check ("sectionFillBackgroundPenIndex", r.sectFillBGPen == s.sectFillBGPen);
+    check ("horizontalRange", r.horizRange == s.horizRange);
+    check ("verticalRange", r.vertRange == s.vertRange);
+    check ("verticalRangeStoryBaseNumber", r.verticalRangeStoryBaseNumber == s.verticalRangeStoryBaseNumber);
+    check ("relativeToStory", r.relativeToStory == s.relativeToStory);
+    check ("verticalRangeMin", sameDouble (r.vertMin, s.vertMin));
+    check ("verticalRangeMax", sameDouble (r.vertMax, s.vertMax));
+    check ("markerSize", sameDouble (r.markerSize, s.markerSize));
+    check ("showMarkerAtBeginning", r.begMark == s.begMark);
+    check ("showMarkerAtEnd", r.endMark == s.endMark);
+    check ("useElementPens", r.useElemPens == s.useElemPens);
+    check ("showLineAtBeginning", r.begLine == s.begLine);
+    check ("showLineAtMiddle", r.middleLine == s.middleLine);
+    check ("showLineAtEnd", r.endLine == s.endLine);
+    check ("textSize", sameDouble (r.textSize, s.textSize));
+    check ("fontIndex", r.font == s.font);
+    check ("effectVectorHatch", sameBit (APICutPl_VectorHatch));
+    check ("effectVectorShadow", sameBit (APICutPl_VectorShadow));
+    check ("effectSunFrom3D", sameBit (APICutPl_SunFrom3D));
+    check ("shadowFillId", r.shadFill == s.shadFill);
+    check ("shadowFillPenIndex", r.shadFillPen == s.shadFillPen);
+    check ("shadowFillBackgroundPenIndex", r.shadFillBGPen == s.shadFillBGPen);
+    check ("limitLineTypeId", r.limitLtypeInd == s.limitLtypeInd);
+    check ("limitLinePenIndex", r.limitLinePen == s.limitLinePen);
+    check ("continuous", r.continuous == s.continuous);
+    check ("sunAzimuth", sameDouble (r.sunAngXY, s.sunAngXY));
+    check ("sunAltitude", sameDouble (r.sunAngZ, s.sunAngZ));
+    check ("useOneModelPen", r.modelUseElemPen == s.modelUseElemPen);
+    check ("modelPenIndex", r.modelElemPen == s.modelElemPen);
+    check ("modelUncutSurfaceFillType", r.modelUncutSurfFillType == s.modelUncutSurfFillType);
+    check ("modelUncutSurfaceFillBackgroundPenIndex", r.modelUncutSurfBGPen == s.modelUncutSurfBGPen);
+    check ("useUncutSurfaceFill", r.modelUseUncutSurfFill == s.modelUseUncutSurfFill);
+    check ("transparent", r.transparency == s.transparency);
+    check ("markedDistantArea", r.markedDistArea == s.markedDistArea);
+    check ("useOneDistantAreaPen", r.distAreaUseElemPen == s.distAreaUseElemPen);
+    check ("distantAreaPenIndex", r.distAreaElemPen == s.distAreaElemPen);
+    check ("distantAreaUncutSurfaceFillBackgroundPenIndex", r.distAreaUncutSurfBGPen == s.distAreaUncutSurfBGPen);
+    check ("useUncutSurfaceFillInDistantArea", r.distAreaUseUncutSurfFill == s.distAreaUseUncutSurfFill);
+    check ("storyHandleAppearance", r.shAppearance == s.shAppearance);
+    check ("storyHandleLineTypeId", r.shLineType == s.shLineType);
+    check ("storyHandleLinePenIndex", r.shLinePen == s.shLinePen);
+    check ("storyHandleMarkerPenIndex", r.shMarkerPen == s.shMarkerPen);
+    check ("storyHandleUseSymbolPens", r.shUseSymbolPens == s.shUseSymbolPens);
+    check ("storyHandleLeftMarkerVisible", r.shLeftMarkerOn == s.shLeftMarkerOn);
+    check ("storyHandleRightMarkerVisible", r.shRightMarkerOn == s.shRightMarkerOn);
+    check ("storyHandleLineVisible", r.shLineOn == s.shLineOn);
+    check ("storyHandleLeftMarkerOffset", sameDouble (r.shLeftMarkerOffset, s.shLeftMarkerOffset));
+    check ("storyHandleRightMarkerOffset", sameDouble (r.shRightMarkerOffset, s.shRightMarkerOffset));
+    check ("storyHandleMarkerFontIndex", r.shMarkerFont == s.shMarkerFont);
+    check ("storyHandleMarkerTextSize", sameDouble (r.shMarkerTextSize, s.shMarkerTextSize));
+    check ("storyHandleMarkerSize", sameDouble (r.shMarkerSize, s.shMarkerSize));
+    check ("boundaryDisplayMode", r.boundaryDisplay == s.boundaryDisplay);
+    check ("boundaryPenIndex", r.boundaryPen == s.boundaryPen);
+    check ("boundaryLineTypeId", r.boundaryLineType == s.boundaryLineType);
+    check ("showOnStories", requested.cutPlShow == stored.cutPlShow);
+    check ("storyToShowOn", requested.storyToShowOn == stored.storyToShowOn);
+    check ("markerShowType", requested.markerShow == stored.markerShow);
+    check ("intendedPlanConnectivity", r.intPlanConn == s.intPlanConn);
+    return unapplied;
+}
+
 CreateSectionsCommand::CreateSectionsCommand () :
     CommandBase (CommonSchema::Used)
 {
@@ -9482,7 +10038,8 @@ GS::Optional<GS::UniString> CreateSectionsCommand::GetInputParametersSchema () c
                         "endCoordinate": { "$ref": "#/Coordinate2D" },
                         "depth": { "type": "number", "description": "The distance of the depth line from the section line, on the left of the start to end direction, which is the direction the section looks in. Default is 1." },
                         "name": { "type": "string" },
-                        "floorIndex": { "type": "integer" }
+                        "floorIndex": { "type": "integer" },
+                        "details": { "$ref": "#/SectionElevationSettableDetails" }
                     },
                     "additionalProperties": false,
                     "required": ["startCoordinate", "endCoordinate"]
@@ -9591,6 +10148,15 @@ GS::ObjectState CreateSectionsCommand::Execute (const GS::ObjectState& parameter
             memo.sectionSegmentDepthCoords[1].x = endCoord.x + nx * depth;
             memo.sectionSegmentDepthCoords[1].y = endCoord.y + ny * depth;
 
+            const GS::ObjectState* details = data.Get ("details");
+            if (details != nullptr) {
+                const GS::Optional<GS::UniString> detailsError = ApplySectionElevationSettableDetails (*details, element.cutPlane, nullptr);
+                if (detailsError.HasValue ()) {
+                    elements.Push (CreateErrorResponse (APIERR_BADPARS, detailsError.Get ()));
+                    continue;
+                }
+            }
+
             err = ACAPI_Element_CreateExt (&element, &memo, 1UL, &marker);
             if (err != NoError) {
                 elements.Push (CreateErrorResponse (err, "Failed to create section."));
@@ -9599,6 +10165,405 @@ GS::ObjectState CreateSectionsCommand::Execute (const GS::ObjectState& parameter
             elements.Push (CreateElementIdObjectState (element.header.guid));
         }
     });
+}
+
+CreateElevationsCommand::CreateElevationsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String CreateElevationsCommand::GetName () const
+{
+    return "CreateElevations";
+}
+
+GS::Optional<GS::UniString> CreateElevationsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elevationsData": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "startCoordinate": { "$ref": "#/Coordinate2D" },
+                        "endCoordinate": { "$ref": "#/Coordinate2D" },
+                        "depth": { "type": "number" },
+                        "name": { "type": "string" },
+                        "floorIndex": { "type": "integer" },
+                        "details": { "$ref": "#/SectionElevationSettableDetails" }
+                    },
+                    "additionalProperties": false,
+                    "required": ["startCoordinate", "endCoordinate"]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["elevationsData"]
+    })";
+}
+
+GS::Optional<GS::UniString> CreateElevationsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elements": {
+                "$ref": "#/ElementIdsOrErrors"
+            }
+        },
+        "additionalProperties": false,
+        "required": ["elements"]
+    })";
+}
+
+GS::ObjectState CreateElevationsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl&) const
+{
+    GS::Array<GS::ObjectState> elevationsData;
+    auto error = GetElementArray (parameters, "elevationsData", elevationsData);
+    if (error.HasValue ()) {
+        return CreateErrorResponse (APIERR_BADPARS, error.Get ());
+    }
+
+    return ExecuteCreateWithElements ("Create Elevations", [&](GS::Array<GS::ObjectState>& elements) {
+        for (const auto& data : elevationsData) {
+            API_Element element = {};
+            API_ElementMemo memo = {};
+            API_SubElement marker = {};
+            const GS::OnExit cleanup ([&]() {
+                ACAPI_DisposeElemMemoHdls (&memo);
+                ACAPI_DisposeElemMemoHdls (&marker.memo);
+            });
+
+#ifdef ServerMainVers_2600
+            element.header.type = API_ElevationID;
+#else
+            element.header.typeID = API_ElevationID;
+#endif
+            marker.subType = static_cast<API_SubElementType> (APISubElement_MainMarker);
+
+            GSErrCode err = ACAPI_Element_GetDefaultsExt (&element, &memo, 1UL, &marker);
+            if (err != NoError) {
+                elements.Push (CreateErrorResponse (err, "Failed to prepare elevation defaults."));
+                continue;
+            }
+
+            if (data.Get ("startCoordinate") == nullptr || data.Get ("endCoordinate") == nullptr) {
+                elements.Push (CreateErrorResponse (APIERR_BADPARS, "Missing required 'startCoordinate' or 'endCoordinate' field."));
+                continue;
+            }
+            const API_Coord startCoord = Get2DCoordinateFromObjectState (*data.Get ("startCoordinate"));
+            const API_Coord endCoord = Get2DCoordinateFromObjectState (*data.Get ("endCoordinate"));
+
+            short floorIndex = 0;
+            if (data.Get ("floorIndex", floorIndex)) {
+                element.header.floorInd = floorIndex;
+            }
+
+            SetUCharProperty (&data, "name", element.elevation.segment.cutPlName);
+
+            const double dx = endCoord.x - startCoord.x;
+            const double dy = endCoord.y - startCoord.y;
+            const double lineLength = sqrt (dx * dx + dy * dy);
+            if (lineLength < 1e-6) {
+                elements.Push (CreateErrorResponse (APIERR_BADPARS, "Start and end coordinates are too close."));
+                continue;
+            }
+
+            double depth = 1.0;
+            data.Get ("depth", depth);
+
+            const double nx = -dy / lineLength;
+            const double ny = dx / lineLength;
+
+            element.elevation.segment.nMainCoord = 2;
+            element.elevation.segment.nDepthCoord = 2;
+            element.elevation.linkData.sourceMarker = true;
+            marker.subType = APISubElement_MainMarker;
+
+            if (memo.sectionSegmentMainCoords != nullptr) {
+                BMpFree (reinterpret_cast<GSPtr> (memo.sectionSegmentMainCoords));
+            }
+            memo.sectionSegmentMainCoords = reinterpret_cast<API_Coord*> (BMpAll (2 * sizeof (API_Coord)));
+            memo.sectionSegmentMainCoords[0] = startCoord;
+            memo.sectionSegmentMainCoords[1] = endCoord;
+
+            if (memo.sectionSegmentDepthCoords != nullptr) {
+                BMpFree (reinterpret_cast<GSPtr> (memo.sectionSegmentDepthCoords));
+            }
+            memo.sectionSegmentDepthCoords = reinterpret_cast<API_Coord*> (BMpAll (2 * sizeof (API_Coord)));
+            memo.sectionSegmentDepthCoords[0].x = startCoord.x + nx * depth;
+            memo.sectionSegmentDepthCoords[0].y = startCoord.y + ny * depth;
+            memo.sectionSegmentDepthCoords[1].x = endCoord.x + nx * depth;
+            memo.sectionSegmentDepthCoords[1].y = endCoord.y + ny * depth;
+
+            const GS::ObjectState* details = data.Get ("details");
+            if (details != nullptr) {
+                const GS::Optional<GS::UniString> detailsError = ApplySectionElevationSettableDetails (*details, element.elevation, nullptr);
+                if (detailsError.HasValue ()) {
+                    elements.Push (CreateErrorResponse (APIERR_BADPARS, detailsError.Get ()));
+                    continue;
+                }
+            }
+
+            err = ACAPI_Element_CreateExt (&element, &memo, 1UL, &marker);
+            if (err != NoError) {
+                elements.Push (CreateErrorResponse (err, "Failed to create elevation."));
+                continue;
+            }
+            elements.Push (CreateElementIdObjectState (element.header.guid));
+        }
+    });
+}
+
+GetSectionsAndElevationsDetailsCommand::GetSectionsAndElevationsDetailsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String GetSectionsAndElevationsDetailsCommand::GetName () const
+{
+    return "GetSectionsAndElevationsDetails";
+}
+
+GS::Optional<GS::UniString> GetSectionsAndElevationsDetailsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elements": {
+                "$ref": "#/Elements"
+            }
+        },
+        "additionalProperties": false,
+        "required": ["elements"]
+    })";
+}
+
+GS::Optional<GS::UniString> GetSectionsAndElevationsDetailsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "detailsOfElements": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/SectionElevationDetailsOrError"
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["detailsOfElements"]
+    })";
+}
+
+GS::ObjectState GetSectionsAndElevationsDetailsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl&) const
+{
+    GS::Array<GS::ObjectState> elements;
+    parameters.Get ("elements", elements);
+
+    GS::ObjectState response;
+    const auto& detailsOfElements = response.AddList<GS::ObjectState> ("detailsOfElements");
+
+    for (const GS::ObjectState& item : elements) {
+        const GS::ObjectState* elementId = item.Get ("elementId");
+        if (elementId == nullptr) {
+            detailsOfElements (CreateErrorResponse (APIERR_BADPARS, "elementId is missing"));
+            continue;
+        }
+
+        API_Element elem = {};
+        elem.header.guid = GetGuidFromObjectState (*elementId);
+        GSErrCode err = ACAPI_Element_Get (&elem);
+        if (err != NoError) {
+            detailsOfElements (CreateErrorResponse (err, "Failed to get the element."));
+            continue;
+        }
+
+        const API_ElemTypeID typeID = GetElemTypeId (elem.header);
+        GS::ObjectState os;
+        if (typeID == API_CutPlaneID) {
+            AddSectionElevationDetails (os, elem.cutPlane, true);
+        } else if (typeID == API_ElevationID) {
+            AddSectionElevationDetails (os, elem.elevation, true);
+        } else {
+            detailsOfElements (CreateErrorResponse (APIERR_BADPARS, "The element is neither a Section nor an Elevation."));
+            continue;
+        }
+        detailsOfElements (os);
+    }
+
+    return response;
+}
+
+SetSectionsAndElevationsDetailsCommand::SetSectionsAndElevationsDetailsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String SetSectionsAndElevationsDetailsCommand::GetName () const
+{
+    return "SetSectionsAndElevationsDetails";
+}
+
+GS::Optional<GS::UniString> SetSectionsAndElevationsDetailsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elementsWithDetails": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "elementId": { "$ref": "#/ElementId" },
+                        "details": { "$ref": "#/SectionElevationSettableDetails" }
+                    },
+                    "additionalProperties": false,
+                    "required": ["elementId", "details"]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["elementsWithDetails"]
+    })";
+}
+
+GS::Optional<GS::UniString> SetSectionsAndElevationsDetailsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "executionResults": {
+                "$ref": "#/ExecutionResults"
+            }
+        },
+        "additionalProperties": false,
+        "required": ["executionResults"]
+    })";
+}
+
+GS::ObjectState SetSectionsAndElevationsDetailsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl&) const
+{
+    GS::Array<GS::ObjectState> elementsWithDetails;
+    parameters.Get ("elementsWithDetails", elementsWithDetails);
+
+    GS::ObjectState response;
+    const auto& executionResults = response.AddList<GS::ObjectState> ("executionResults");
+
+    ACAPI_CallUndoableCommand ("Set Sections/Elevations Details", [&]() {
+        for (const GS::ObjectState& item : elementsWithDetails) {
+            const GS::ObjectState* elementId = item.Get ("elementId");
+            const GS::ObjectState* details = item.Get ("details");
+            if (elementId == nullptr || details == nullptr) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "elementId or details is missing"));
+                continue;
+            }
+
+            API_Element elem = {};
+            elem.header.guid = GetGuidFromObjectState (*elementId);
+            GSErrCode err = ACAPI_Element_Get (&elem);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to find the element."));
+                continue;
+            }
+
+            const API_ElemTypeID typeID = GetElemTypeId (elem.header);
+            if (typeID != API_CutPlaneID && typeID != API_ElevationID) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "The element is neither a Section nor an Elevation."));
+                continue;
+            }
+
+            API_Element mask = {};
+            ACAPI_ELEMENT_MASK_CLEAR (mask);
+            const GS::Optional<GS::UniString> detailsError = (typeID == API_CutPlaneID)
+                ? ApplySectionElevationSettableDetails (*details, elem.cutPlane, &mask)
+                : ApplySectionElevationSettableDetails (*details, elem.elevation, &mask);
+            if (detailsError.HasValue ()) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, detailsError.Get ()));
+                continue;
+            }
+
+            // The name and the reference ID are also those of the element's viewpoint (its database
+            // and its Project Map item). ACAPI_Element_Change leaves the three of them untouched and
+            // still returns NoError; ACAPI_Element_ChangeParameters, the settings path that the
+            // DevKit's Element_Test example uses for segment.cutPlIdStr, changes the element and its
+            // viewpoint together (both tested on Archicad 30). Given the element's own guid it changed
+            // only that element, also inside a group with Suspend Groups off (tested on Archicad 30;
+            // the DevKit says the list can be extended to group members, which a check covers).
+            const bool setsName = details->Contains ("name");
+            const bool setsReferenceId = details->Contains ("referenceId");
+
+            // ACAPI_Element_Change may write the stored values back into elem.
+            API_Element requested = elem;
+            err = ACAPI_Element_Change (&elem, &mask, nullptr, 0, true);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to modify the element."));
+                continue;
+            }
+            requested.header.guid = elem.header.guid;
+
+            if (setsName || setsReferenceId) {
+                API_Element renameMask = {};
+                ACAPI_ELEMENT_MASK_CLEAR (renameMask);
+                if (setsName) {
+                    ACAPI_ELEMENT_MASK_SET (renameMask, API_CutPlaneType, segment.cutPlName);
+                }
+                if (setsReferenceId) {
+                    ACAPI_ELEMENT_MASK_SET (renameMask, API_CutPlaneType, segment.cutPlIdStr);
+                }
+                GS::Array<API_Guid> renamedGuids;
+                renamedGuids.Push (requested.header.guid);
+                err = ACAPI_Element_ChangeParameters (renamedGuids, &requested, nullptr, &renameMask);
+                if (err != NoError) {
+                    executionResults (CreateFailedExecutionResult (err, "Failed to change the name or the reference ID of the element. Every other requested setting was applied."));
+                    continue;
+                }
+            }
+
+            API_Element stored = {};
+            stored.header.guid = requested.header.guid;
+            err = ACAPI_Element_Get (&stored);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to read the element back after the change."));
+                continue;
+            }
+
+            GS::Array<GS::UniString> unapplied = GetUnappliedSectionElevationDetails (*details, requested.cutPlane, stored.cutPlane);
+            if (setsName || setsReferenceId) {
+                // What the Project Map shows: the name and the reference ID of the viewpoint's database.
+                API_DatabaseInfo viewpoint = {};
+                viewpoint.typeID = (typeID == API_CutPlaneID) ? APIWind_SectionID : APIWind_ElevationID;
+                viewpoint.databaseUnId = stored.cutPlane.segment.databaseID;
+                if (ACAPI_Window_GetDatabaseInfo (&viewpoint) == NoError) {
+                    if (setsName && GS::UniString (viewpoint.name) != GS::UniString (requested.cutPlane.segment.cutPlName)) {
+                        unapplied.Push ("name (on the Project Map viewpoint)");
+                    }
+                    if (setsReferenceId && GS::UniString (viewpoint.ref) != GS::UniString (requested.cutPlane.segment.cutPlIdStr)) {
+                        unapplied.Push ("referenceId (on the Project Map viewpoint)");
+                    }
+                }
+            }
+
+            if (!unapplied.IsEmpty ()) {
+                GS::UniString fields;
+                for (const GS::UniString& field : unapplied) {
+                    if (!fields.IsEmpty ()) {
+                        fields += ", ";
+                    }
+                    fields += field;
+                }
+                executionResults (CreateFailedExecutionResult (APIERR_REFUSEDPAR,
+                    GS::UniString ("Archicad did not apply ") + fields + ". Every other requested setting was applied."));
+                continue;
+            }
+            executionResults (CreateSuccessfulExecutionResult ());
+        }
+        return NoError;
+    });
+
+    return response;
 }
 
 CreateInteriorElevationsCommand::CreateInteriorElevationsCommand () :

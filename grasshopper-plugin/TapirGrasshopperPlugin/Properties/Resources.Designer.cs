@@ -4106,6 +4106,14 @@ namespace TapirGrasshopperPlugin.Properties
             }
         }
 
+        internal static System.Drawing.Bitmap CreateElevations
+        {
+            get {
+                object obj = ResourceManager.GetObject ("CreateElevations", resourceCulture);
+                return ((System.Drawing.Bitmap) (obj));
+            }
+        }
+
         internal static System.Drawing.Bitmap GetPointFromUser
         {
             get {
