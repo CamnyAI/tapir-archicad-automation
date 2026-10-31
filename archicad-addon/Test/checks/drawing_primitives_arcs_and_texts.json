@@ -1,0 +1,116 @@
+{
+  "title": "GetDrawingPrimitivesOfElements returns the vertices and arcs of polylines and fills and the content of texts",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "polyline with a curved segment",
+      "command": "CreatePolylines",
+      "params": {
+        "polylinesData": [
+          {
+            "coordinates": [
+              { "x": 700.0, "y": 700.0 },
+              { "x": 704.0, "y": 700.0 },
+              { "x": 704.0, "y": 703.0 },
+              { "x": 700.0, "y": 703.0 }
+            ],
+            "arcs": [
+              { "begIndex": 1, "endIndex": 2, "arcAngle": 1.0 }
+            ]
+          }
+        ]
+      },
+      "save": {
+        "pl": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "polyline primitives",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${pl}" } } ]
+      },
+      "expect": [
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].type", "eq": "PLine", "name": "a polyline primitive" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].coordinates", "len": 4, "name": "its four vertices" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].coordinates[0].x", "approx": 700.0, "name": "first vertex x" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].coordinates[2].x", "approx": 704.0, "name": "third vertex x" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].coordinates[2].y", "approx": 703.0, "name": "third vertex y" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].arcs", "len": 1, "name": "one curved segment" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].arcs[0].begIndex", "eq": 1, "name": "arc from the second vertex" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].arcs[0].endIndex", "eq": 2, "name": "arc to the third vertex" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[1].arcs[0].arcAngle", "approx": 1.0, "name": "arc angle as created" }
+      ]
+    },
+    {
+      "id": "fill with a curved edge",
+      "command": "CreateHatches",
+      "params": {
+        "hatchesData": [
+          {
+            "coordinates": [
+              { "x": 710.0, "y": 700.0 },
+              { "x": 714.0, "y": 700.0 },
+              { "x": 714.0, "y": 703.0 },
+              { "x": 710.0, "y": 703.0 }
+            ],
+            "arcs": [
+              { "begIndex": 2, "endIndex": 3, "arcAngle": -0.8 }
+            ],
+            "showArea": false
+          }
+        ]
+      },
+      "save": {
+        "fill": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "fill primitives",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${fill}" } } ]
+      },
+      "expect": [
+        { "path": "drawingPrimitivesOfElements[0].primitives[4].type", "eq": "Ctrl_HatchBorderBeg", "name": "the fill border begins" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[4].hatchBorder.fillPen", "exists": true, "name": "with its fill" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[5].type", "eq": "Poly", "name": "the fill polygon" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[5].polygons[0].coordinates", "len": 5, "name": "closed outline of four vertices" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[5].polygons[0].coordinates[3].y", "approx": 703.0, "name": "fourth vertex y" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[5].polygons[0].arcs", "len": 1, "name": "one curved edge" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[5].polygons[0].arcs[0].begIndex", "eq": 2, "name": "edge from the third vertex" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[5].polygons[0].arcs[0].arcAngle", "approx": -0.8, "name": "edge angle as created" }
+      ]
+    },
+    {
+      "id": "text with accented letters",
+      "command": "CreateTexts",
+      "params": {
+        "textsData": [
+          {
+            "coordinate": { "x": 720.0, "y": 700.0, "z": 0 },
+            "text": "Größe ÄÖÜ"
+          }
+        ]
+      },
+      "save": {
+        "t": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "text primitives",
+      "command": "GetDrawingPrimitivesOfElements",
+      "creates": false,
+      "params": {
+        "elements": [ { "elementId": { "guid": "${t}" } } ]
+      },
+      "expect": [
+        { "path": "drawingPrimitivesOfElements[0].primitives[3].type", "eq": "Ctrl_TextBeg", "name": "the text block begins" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[4].type", "eq": "Text", "name": "a text primitive" },
+        { "path": "drawingPrimitivesOfElements[0].primitives[4].text", "eq": "Größe ÄÖÜ", "name": "its content" }
+      ]
+    }
+  ]
+}
