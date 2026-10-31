@@ -1,0 +1,214 @@
+{
+  "title": "GetDrawingPrimitivesOfDatabase reads a never opened section and a worksheet without changing the front window",
+  "minTapir": "1.7.4",
+  "minArchicad": "27",
+  "requiresEmpty": ["Wall", "Slab", "Stair", "Roof", "Zone", "CutPlane"],
+  "steps": [
+    {
+      "id": "basic wall along x, centered on y = 0",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": { "x": 0.0, "y": 0.0 },
+            "endCoordinate": { "x": 6.0, "y": 0.0 },
+            "zCoordinate": 0.0,
+            "height": 3.0,
+            "structureType": "Basic",
+            "thickness": 0.3,
+            "referenceLineLocation": "Center"
+          }
+        ]
+      }
+    },
+    {
+      "id": "section across the wall, looking along -x",
+      "command": "CreateSections",
+      "params": {
+        "sectionsData": [
+          {
+            "startCoordinate": { "x": 3.0, "y": -2.0 },
+            "endCoordinate": { "x": 3.0, "y": 2.0 },
+            "name": "TapirCheck section"
+          }
+        ]
+      }
+    },
+    {
+      "id": "its database",
+      "command": "GetDatabases",
+      "creates": false,
+      "params": { "types": ["Section"] },
+      "save": { "sdb": "databases[0].databaseId.guid" },
+      "expect": [
+        { "path": "databases", "len": 1, "name": "the new section is the only one" }
+      ]
+    },
+    {
+      "id": "read the never opened section, walls only",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": {
+        "databaseId": { "guid": "${sdb}" },
+        "elementTypes": ["Wall"]
+      },
+      "save": {
+        "x0": "elements[0].primitives[2].polygons[0].coordinates[0].x",
+        "x1": "elements[0].primitives[2].polygons[0].coordinates[1].x",
+        "x2": "elements[0].primitives[2].polygons[0].coordinates[2].x",
+        "x3": "elements[0].primitives[2].polygons[0].coordinates[3].x",
+        "y0": "elements[0].primitives[2].polygons[0].coordinates[0].y",
+        "y1": "elements[0].primitives[2].polygons[0].coordinates[1].y",
+        "y2": "elements[0].primitives[2].polygons[0].coordinates[2].y",
+        "y3": "elements[0].primitives[2].polygons[0].coordinates[3].y"
+      },
+      "expect": [
+        { "path": "database.windowType", "eq": "Section" },
+        { "path": "database.name", "eq": "TapirCheck section" },
+        { "path": "database.linkedElementId.guid", "exists": true, "name": "linked to its marker" },
+        { "path": "windowOpened", "eq": true, "name": "its window had to be opened" },
+        { "path": "drawingScale", "gt": 0 },
+        { "path": "elements", "len": 1, "name": "one wall drawn" },
+        { "path": "elements[0].elementType", "eq": "SectElem" },
+        { "path": "elements[0].ownerElementId.guid", "exists": true },
+        { "path": "elements[0].ownerElementType", "eq": "Wall" },
+        { "path": "elements[0].primitives[2].type", "eq": "Poly", "name": "the cut fill" },
+        { "path": "elements[0].primitives[2].polygons[0].coordinates", "len": 5, "name": "a closed rectangle" },
+        { "expr": "${x0} * ${x0}", "approx": 0.0225, "name": "corner 0 at x = +-0.15 (plan y of the faces)" },
+        { "expr": "${x0} + ${x1} + ${x2} + ${x3}", "approx": 0.0, "name": "the cut spans x -0.15 .. 0.15" },
+        { "expr": "${y0} + ${y1} + ${y2} + ${y3}", "approx": 6.0, "name": "the cut spans y 0 .. 3" },
+        { "expr": "${y0} * (${y0} - 3)", "approx": 0.0, "name": "corner 0 at y = 0 or 3" }
+      ]
+    },
+    {
+      "id": "front window after reading the section",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        { "path": "currentWindowType", "eq": "FloorPlan", "name": "still the floor plan" }
+      ]
+    },
+    {
+      "id": "read it again",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${sdb}" }, "elementTypes": ["Wall"] },
+      "expect": [
+        { "path": "windowOpened", "eq": false, "name": "readable in the background now" },
+        { "path": "elements", "len": 1 }
+      ]
+    },
+    {
+      "id": "a second wall across the section, after the section was built",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": { "x": 0.0, "y": 1.0 },
+            "endCoordinate": { "x": 6.0, "y": 1.0 },
+            "zCoordinate": 0.0,
+            "height": 2.0,
+            "structureType": "Basic",
+            "thickness": 0.3,
+            "referenceLineLocation": "Center"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read it with rebuild",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${sdb}" }, "elementTypes": ["Wall"], "rebuild": true },
+      "expect": [
+        { "path": "windowOpened", "eq": true, "name": "its window was brought to the front" },
+        { "path": "elements", "len": 2, "name": "the new wall is drawn too" }
+      ]
+    },
+    {
+      "id": "front window after the rebuild",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        { "path": "currentWindowType", "eq": "FloorPlan", "name": "the floor plan is in front again" }
+      ]
+    },
+    {
+      "id": "rebuild without opening windows is refused",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${sdb}" }, "rebuild": true, "openWindowIfNeeded": false },
+      "expect": [ { "path": "error.code", "exists": true } ]
+    },
+    {
+      "id": "worksheet",
+      "command": "CreateWorksheets",
+      "creates": false,
+      "params": {
+        "worksheetsData": [ { "name": "TapirCheck worksheet", "referenceId": "TC-WS" } ]
+      },
+      "save": {
+        "wsdb": "databases[0].databaseId.guid",
+        "wsnav": "databases[0].navigatorItemId.guid"
+      }
+    },
+    {
+      "id": "open the worksheet",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${wsdb}" } },
+      "expect": [ { "path": "success", "eq": true } ]
+    },
+    {
+      "id": "a line in the worksheet",
+      "command": "CreateLineElements",
+      "params": {
+        "linesData": [
+          { "begCoordinate": { "x": 1.0, "y": 2.0 }, "endCoordinate": { "x": 4.0, "y": 6.0 } }
+        ]
+      }
+    },
+    {
+      "id": "back to the floor plan",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": { "windowType": "FloorPlan" },
+      "expect": [ { "path": "success", "eq": true } ]
+    },
+    {
+      "id": "read the worksheet",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${wsdb}" } },
+      "expect": [
+        { "path": "database.windowType", "eq": "Worksheet" },
+        { "path": "database.referenceId", "eq": "TC-WS" },
+        { "path": "windowOpened", "eq": false, "name": "it was open already" },
+        { "path": "elements", "len": 1 },
+        { "path": "elements[0].elementType", "eq": "Line" },
+        { "path": "elements[0].primitives[1].type", "eq": "Line" },
+        { "path": "elements[0].primitives[1].c1.x", "approx": 1.0 },
+        { "path": "elements[0].primitives[1].c1.y", "approx": 2.0 },
+        { "path": "elements[0].primitives[1].c2.x", "approx": 4.0 },
+        { "path": "elements[0].primitives[1].c2.y", "approx": 6.0 }
+      ]
+    },
+    {
+      "id": "the floor plan is refused",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "d5d16dd4-093f-4674-895d-410d634d8c7e" } },
+      "expect": [ { "path": "error.code", "exists": true } ]
+    },
+    {
+      "id": "front window at the end",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [ { "path": "currentWindowType", "eq": "FloorPlan" } ]
+    }
+  ],
+  "teardown": [
+    { "command": "ChangeWindow", "params": { "windowType": "FloorPlan" } },
+    { "command": "DeleteNavigatorItems", "params": { "navigatorItemIds": [ { "navigatorItemId": { "guid": "${wsnav}" } } ] } }
+  ]
+}

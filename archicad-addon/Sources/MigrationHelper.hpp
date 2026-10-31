@@ -247,6 +247,12 @@ inline GSErrCode ACAPI_Drawing_ChangeDrawingScale (double* scale, bool zoom = fa
     return ACAPI_Database (APIDb_ChangeDrawingScaleID, (void*) scale, (void*) &zoom);
 }
 
+// APIDb_GetLocOrigoID: par1 API_Coord3D* (the user origin of the current database).
+#define ACAPI_Database_GetLocOrigo(par1) ACAPI_Database (APIDb_GetLocOrigoID, (void*) par1)
+// A drawing order walk must be started and ended (APIDb_DrawOrderInitID, APIDb_DrawOrderTermID).
+#define ACAPI_DrawOrder_DrawOrderInit() ACAPI_Database (APIDb_DrawOrderInitID)
+#define ACAPI_DrawOrder_DrawOrderTerm() ACAPI_Database (APIDb_DrawOrderTermID)
+
 inline API_AttributeIndex ACAPI_CreateAttributeIndex (Int32 index)
 {
     return index;

@@ -24,3 +24,10 @@ public:
     virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
+
+// The primitive converter of GetDrawingPrimitivesOfElements, for the commands of other files.
+// Decomposes one element of the current database into `primitives`, each item in the format of
+// one item of GetDrawingPrimitivesOfElements' primitives list.
+GSErrCode GetDrawingPrimitivesOfElement (const API_Elem_Head& elemHead, GS::Array<GS::ObjectState>& primitives);
+// The JSON schema of one item of a primitives list.
+GS::UniString DrawingPrimitiveItemSchema ();
