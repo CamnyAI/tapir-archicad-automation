@@ -5,6 +5,7 @@ import subprocess
 import shutil
 import codecs
 import argparse
+import json
 from pathlib import Path
 
 class ResourceCompiler (object):
@@ -17,6 +18,7 @@ class ResourceCompiler (object):
         self.resourceObjectsPath = resourceObjectsPath
         self.resConvPath = None
         self.nativeResourceFileExtension = None
+        self.imageResourcesFolder = None
 
     def IsValid (self) -> bool:
         if self.resConvPath is None:
@@ -41,8 +43,26 @@ class ResourceCompiler (object):
         for grcFilePath in grcFiles:
             assert self.CompileGRCResourceFile (grcFilePath), f'Failed to compile resource: {grcFilePath}'
 
+    def GetImageResourcesFolder (self) -> Path:
+        # ResConv takes the FILE resources from the image search path. A copy of RFIX/Images is
+        # used, with its JSON files minified: Archicad stops accepting the common schema definitions
+        # once they pass a size limit (636,661 bytes indented were accepted, 656,174 were not, so
+        # every command whose schema refers to them was not registered); minified they are about
+        # a third smaller, and the indented source file stays readable and easy to merge.
+        if self.imageResourcesFolder is None:
+            sourceFolder = self.resourcesPath / 'RFIX' / 'Images'
+            targetFolder = self.resourceObjectsPath / 'Images'
+            if targetFolder.exists ():
+                shutil.rmtree (targetFolder)
+            shutil.copytree (sourceFolder, targetFolder)
+            for jsonFilePath in targetFolder.glob ('*.json'):
+                content = json.loads (jsonFilePath.read_text (encoding='utf-8'))
+                jsonFilePath.write_text (json.dumps (content, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+            self.imageResourcesFolder = targetFolder
+        return self.imageResourcesFolder
+
     def RunResConv (self, platformSign: str, codepage: str, inputFilePath: Path) -> bool:
-        imageResourcesFolder = self.resourcesPath / 'RFIX' / 'Images'
+        imageResourcesFolder = self.GetImageResourcesFolder ()
         inputFileBaseName = inputFilePath.stem
         nativeResourceFilePath = self.resourceObjectsPath / (inputFileBaseName + self.nativeResourceFileExtension)
         colorChangeScriptPath = self.resConvPath.parent / 'SVGColorChange.py'
