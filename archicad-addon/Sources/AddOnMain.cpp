@@ -64,6 +64,7 @@
 #include "DrawingPrimitiveCommands.hpp"
 #include "DatabaseDrawingPrimitiveCommands.hpp"
 #include "GeometryOperationCommands.hpp"
+#include "CurrentViewSettingsCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
@@ -1636,6 +1637,10 @@ GSErrCode Initialize (void)
             attributeCommands, "1.7.3",
             "Returns the current Pen Table (its index, attribute identifier and name) and its number of pens. Pass the returned attributeId to GetPenTables to read the pens."
         );
+        err |= RegisterCommand<SetCurrentPenTableCommand> (
+            attributeCommands, "1.7.4",
+            "Puts a Pen Table, given by attribute id or by name, into effect in the current window and redraws it, as choosing a pen set in Archicad does; read it back with GetCurrentPenTable. Each model window (the floor plan, the 3D window, each section and elevation) has its own. The Archicad API has no function for this, so a temporary View Map view of the window, with its current settings and the Pen Table, is opened and deleted again; the window then no longer shows a saved view it may have been opened from. Layouts are not supported. In a Teamwork project the View Map must be reserved. Available from Archicad 27."
+        );
         err |= RegisterCommand<GetProfilesCommand> (
             attributeCommands, "1.5.4",
             "Returns the details of the given Profile attributes."
@@ -2027,6 +2032,14 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<FindModelViewOptionCommand> (
             navigatorCommands, "1.7.3",
             "Finds a model view option combination by id or by name and returns its index, id, name and flags. The index is the one Archicad uses to switch the model view options of a window to the combination. Available from Archicad 27."
+        );
+        err |= RegisterCommand<GetCurrentModelViewOptionCommand> (
+            navigatorCommands, "1.7.4",
+            "Gets the model view options in effect in the current window: the index and name of the model view option combination it uses (index 0 for custom settings) and the settings of the Model View Options dialog that are not options of GDL objects. Each model window (the floor plan, the 3D window, each section and elevation) has its own. The current window must be a model window. Available from Archicad 27."
+        );
+        err |= RegisterCommand<SetCurrentModelViewOptionCommand> (
+            navigatorCommands, "1.7.4",
+            "Switches the current window to a model view option combination, given by name, and/or changes single settings of its model view options, and redraws it. Other windows and the saved views keep theirs (see SetViewSettings for a saved view). The current window must be a model window. Available from Archicad 27."
         );
         err |= RegisterCommand<GetViewSettingsCommand> (
             navigatorCommands, "1.1.4",

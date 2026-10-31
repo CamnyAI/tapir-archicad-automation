@@ -564,15 +564,18 @@ GS::ObjectState GetModelViewOptionsCommand::Execute (const GS::ObjectState& /*pa
     UInt32 count = 0;
     ACAPI_Navigator_ModelViewOptions_GetNum (count);
 
+    // While the current window uses custom settings, Archicad lists them as an unnamed entry
+    // in front of the combinations; it is not a combination.
     for (UInt32 i = 1; i <= count; ++i) {
         GS::UniString name;
         API_ModelViewOptionsType modelViewOption = {};
         modelViewOption.head.index = i;
         modelViewOption.head.uniStringNamePtr = &name;
 
-        if (ACAPI_Navigator_ModelViewOptions_Get (&modelViewOption) == NoError) {
+        if (ACAPI_Navigator_ModelViewOptions_Get (&modelViewOption) == NoError && !name.IsEmpty ()) {
             modelViewOptions (GS::ObjectState ("name", name));
         }
+        ACAPI_FreeGDLModelViewOptionsPtr (&modelViewOption.modelViewOpt.gdlOptions);
     }
 #else
     API_AttributeIndex count = 0;
@@ -720,6 +723,31 @@ GS::ObjectState FindModelViewOptionCommand::Execute (const GS::ObjectState& para
             modelViewOption.head.index = i;
 
             if (ACAPI_Navigator_ModelViewOptions_Get (&modelViewOption) == NoError && modelViewOption.head.guid == guidToSearch) {
+                searchHead.index = modelViewOption.head.index;
+                err = NoError;
+                break;
+            }
+        }
+    }
+
+    // Archicad 30 finds no combination by its Unicode name, and while the current window uses
+    // custom settings it answers every name with an unnamed entry that holds them, so a name is
+    // looked up by comparing the names of the combinations instead.
+    if (guidToSearch == APINULLGuid) {
+        err = APIERR_BADNAME;
+
+        UInt32 count = 0;
+        ACAPI_Navigator_ModelViewOptions_GetNum (count);
+
+        for (UInt32 i = 1; i <= count; ++i) {
+            GS::UniString combinationName;
+            API_ModelViewOptionsType modelViewOption = {};
+            modelViewOption.head.index = i;
+            modelViewOption.head.uniStringNamePtr = &combinationName;
+
+            const bool found = ACAPI_Navigator_ModelViewOptions_Get (&modelViewOption) == NoError && !nameToSearch.IsEmpty () && combinationName == nameToSearch;
+            ACAPI_FreeGDLModelViewOptionsPtr (&modelViewOption.modelViewOpt.gdlOptions);
+            if (found) {
                 searchHead.index = modelViewOption.head.index;
                 err = NoError;
                 break;
