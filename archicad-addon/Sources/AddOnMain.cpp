@@ -1176,7 +1176,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<SetSectionsAndElevationsDetailsCommand> (
             navigatorCommands, "1.7.2",
-            "Sets settings of the given Section and Elevation elements. Archicad keeps the name and reference ID of an existing element: set them when creating it."
+            "Sets settings of the given Section and Elevation elements, including the name and the reference ID, which their Project Map viewpoints show too. Every element is read back after the change: an item fails, naming the settings, when Archicad did not store one of them."
         );
         err |= RegisterCommand<MoveNavigatorItemCommand> (
             navigatorCommands, "1.1.7",

@@ -7162,12 +7162,10 @@ static GS::Optional<GS::UniString> ApplySectionElevationSettableDetails (const G
     API_SectionSegment& seg = cutPlane.segment;
 
     GS::UniString strVal;
-    if (details.Get ("name", strVal)) {
-        GS::ucscpy (seg.cutPlName, strVal.ToUStr ().Get ());
+    if (SetUCharProperty (&details, "name", seg.cutPlName)) {
         if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.cutPlName);
     }
-    if (details.Get ("referenceId", strVal)) {
-        GS::ucscpy (seg.cutPlIdStr, strVal.ToUStr ().Get ());
+    if (SetUCharProperty (&details, "referenceId", seg.cutPlIdStr)) {
         if (mask != nullptr) ACAPI_ELEMENT_MASK_SET (*mask, API_CutPlaneType, segment.cutPlIdStr);
     }
     if (details.Get ("linePenIndex", seg.linePen)) {
@@ -7426,6 +7424,91 @@ static GS::Optional<GS::UniString> ApplySectionElevationSettableDetails (const G
     return {};
 }
 
+// The fields of 'details' that Archicad did not store: 'requested' is the element with 'details'
+// applied by ApplySectionElevationSettableDetails, 'stored' the element read back after the change.
+// ACAPI_Element_Change returns NoError for a field it leaves untouched, so this read-back is what
+// tells a change that happened from one that did not.
+static GS::Array<GS::UniString> GetUnappliedSectionElevationDetails (const GS::ObjectState& details, const API_CutPlaneType& requested, const API_CutPlaneType& stored)
+{
+    const API_SectionSegment& r = requested.segment;
+    const API_SectionSegment& s = stored.segment;
+    const auto sameDouble = [] (double a, double b) { return std::abs (a - b) <= 1e-6; };
+    const auto sameBit = [&] (short bit) { return (r.effectBits & bit) == (s.effectBits & bit); };
+
+    GS::Array<GS::UniString> unapplied;
+    const auto check = [&] (const char* key, bool same) {
+        if (!same && details.Contains (key)) {
+            unapplied.Push (key);
+        }
+    };
+    check ("name", GS::UniString (r.cutPlName) == GS::UniString (s.cutPlName));
+    check ("referenceId", GS::UniString (r.cutPlIdStr) == GS::UniString (s.cutPlIdStr));
+    check ("linePenIndex", r.linePen == s.linePen);
+    check ("textPenIndex", r.textPen == s.textPen);
+    check ("lineTypeId", r.ltypeInd == s.ltypeInd);
+    check ("sectionLinePenIndex", r.sectPen == s.sectPen);
+    check ("sectionFillPenIndex", r.sectFillPen == s.sectFillPen);
+    check ("sectionFillBackgroundPenIndex", r.sectFillBGPen == s.sectFillBGPen);
+    check ("horizontalRange", r.horizRange == s.horizRange);
+    check ("verticalRange", r.vertRange == s.vertRange);
+    check ("verticalRangeStoryBaseNumber", r.verticalRangeStoryBaseNumber == s.verticalRangeStoryBaseNumber);
+    check ("relativeToStory", r.relativeToStory == s.relativeToStory);
+    check ("verticalRangeMin", sameDouble (r.vertMin, s.vertMin));
+    check ("verticalRangeMax", sameDouble (r.vertMax, s.vertMax));
+    check ("markerSize", sameDouble (r.markerSize, s.markerSize));
+    check ("showMarkerAtBeginning", r.begMark == s.begMark);
+    check ("showMarkerAtEnd", r.endMark == s.endMark);
+    check ("useElementPens", r.useElemPens == s.useElemPens);
+    check ("showLineAtBeginning", r.begLine == s.begLine);
+    check ("showLineAtMiddle", r.middleLine == s.middleLine);
+    check ("showLineAtEnd", r.endLine == s.endLine);
+    check ("textSize", sameDouble (r.textSize, s.textSize));
+    check ("fontIndex", r.font == s.font);
+    check ("effectVectorHatch", sameBit (APICutPl_VectorHatch));
+    check ("effectVectorShadow", sameBit (APICutPl_VectorShadow));
+    check ("effectSunFrom3D", sameBit (APICutPl_SunFrom3D));
+    check ("shadowFillId", r.shadFill == s.shadFill);
+    check ("shadowFillPenIndex", r.shadFillPen == s.shadFillPen);
+    check ("shadowFillBackgroundPenIndex", r.shadFillBGPen == s.shadFillBGPen);
+    check ("limitLineTypeId", r.limitLtypeInd == s.limitLtypeInd);
+    check ("limitLinePenIndex", r.limitLinePen == s.limitLinePen);
+    check ("continuous", r.continuous == s.continuous);
+    check ("sunAzimuth", sameDouble (r.sunAngXY, s.sunAngXY));
+    check ("sunAltitude", sameDouble (r.sunAngZ, s.sunAngZ));
+    check ("useOneModelPen", r.modelUseElemPen == s.modelUseElemPen);
+    check ("modelPenIndex", r.modelElemPen == s.modelElemPen);
+    check ("modelUncutSurfaceFillType", r.modelUncutSurfFillType == s.modelUncutSurfFillType);
+    check ("modelUncutSurfaceFillBackgroundPenIndex", r.modelUncutSurfBGPen == s.modelUncutSurfBGPen);
+    check ("useUncutSurfaceFill", r.modelUseUncutSurfFill == s.modelUseUncutSurfFill);
+    check ("transparent", r.transparency == s.transparency);
+    check ("markedDistantArea", r.markedDistArea == s.markedDistArea);
+    check ("useOneDistantAreaPen", r.distAreaUseElemPen == s.distAreaUseElemPen);
+    check ("distantAreaPenIndex", r.distAreaElemPen == s.distAreaElemPen);
+    check ("distantAreaUncutSurfaceFillBackgroundPenIndex", r.distAreaUncutSurfBGPen == s.distAreaUncutSurfBGPen);
+    check ("useUncutSurfaceFillInDistantArea", r.distAreaUseUncutSurfFill == s.distAreaUseUncutSurfFill);
+    check ("storyHandleAppearance", r.shAppearance == s.shAppearance);
+    check ("storyHandleLineTypeId", r.shLineType == s.shLineType);
+    check ("storyHandleLinePenIndex", r.shLinePen == s.shLinePen);
+    check ("storyHandleMarkerPenIndex", r.shMarkerPen == s.shMarkerPen);
+    check ("storyHandleUseSymbolPens", r.shUseSymbolPens == s.shUseSymbolPens);
+    check ("storyHandleLeftMarkerVisible", r.shLeftMarkerOn == s.shLeftMarkerOn);
+    check ("storyHandleRightMarkerVisible", r.shRightMarkerOn == s.shRightMarkerOn);
+    check ("storyHandleLineVisible", r.shLineOn == s.shLineOn);
+    check ("storyHandleLeftMarkerOffset", sameDouble (r.shLeftMarkerOffset, s.shLeftMarkerOffset));
+    check ("storyHandleRightMarkerOffset", sameDouble (r.shRightMarkerOffset, s.shRightMarkerOffset));
+    check ("storyHandleMarkerFontIndex", r.shMarkerFont == s.shMarkerFont);
+    check ("storyHandleMarkerTextSize", sameDouble (r.shMarkerTextSize, s.shMarkerTextSize));
+    check ("storyHandleMarkerSize", sameDouble (r.shMarkerSize, s.shMarkerSize));
+    check ("boundaryDisplayMode", r.boundaryDisplay == s.boundaryDisplay);
+    check ("boundaryPenIndex", r.boundaryPen == s.boundaryPen);
+    check ("boundaryLineTypeId", r.boundaryLineType == s.boundaryLineType);
+    check ("showOnStories", requested.cutPlShow == stored.cutPlShow);
+    check ("storyToShowOn", requested.storyToShowOn == stored.storyToShowOn);
+    check ("markerShowType", requested.markerShow == stored.markerShow);
+    check ("intendedPlanConnectivity", r.intPlanConn == s.intPlanConn);
+    return unapplied;
+}
+
 CreateSectionsCommand::CreateSectionsCommand () :
     CommandBase (CommonSchema::Used)
 {
@@ -7673,10 +7756,7 @@ GS::ObjectState CreateElevationsCommand::Execute (const GS::ObjectState& paramet
                 element.header.floorInd = floorIndex;
             }
 
-            GS::UniString name;
-            if (data.Get ("name", name)) {
-                GS::ucscpy (element.elevation.segment.cutPlName, name.ToUStr ().Get ());
-            }
+            SetUCharProperty (&data, "name", element.elevation.segment.cutPlName);
 
             const double dx = endCoord.x - startCoord.x;
             const double dy = endCoord.y - startCoord.y;
@@ -7900,8 +7980,80 @@ GS::ObjectState SetSectionsAndElevationsDetailsCommand::Execute (const GS::Objec
                 continue;
             }
 
+            // The name and the reference ID are also those of the element's viewpoint (its database
+            // and its Project Map item). ACAPI_Element_Change leaves the three of them untouched and
+            // still returns NoError; ACAPI_Element_ChangeParameters, the settings path that the
+            // DevKit's Element_Test example uses for segment.cutPlIdStr, changes the element and its
+            // viewpoint together (both tested on Archicad 30). Given the element's own guid it changed
+            // only that element, also inside a group with Suspend Groups off (tested on Archicad 30;
+            // the DevKit says the list can be extended to group members, which a check covers).
+            const bool setsName = details->Contains ("name");
+            const bool setsReferenceId = details->Contains ("referenceId");
+
+            // ACAPI_Element_Change may write the stored values back into elem.
+            API_Element requested = elem;
             err = ACAPI_Element_Change (&elem, &mask, nullptr, 0, true);
-            executionResults (err == NoError ? CreateSuccessfulExecutionResult () : CreateFailedExecutionResult (err, "Failed to modify the element."));
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to modify the element."));
+                continue;
+            }
+            requested.header.guid = elem.header.guid;
+
+            if (setsName || setsReferenceId) {
+                API_Element renameMask = {};
+                ACAPI_ELEMENT_MASK_CLEAR (renameMask);
+                if (setsName) {
+                    ACAPI_ELEMENT_MASK_SET (renameMask, API_CutPlaneType, segment.cutPlName);
+                }
+                if (setsReferenceId) {
+                    ACAPI_ELEMENT_MASK_SET (renameMask, API_CutPlaneType, segment.cutPlIdStr);
+                }
+                GS::Array<API_Guid> renamedGuids;
+                renamedGuids.Push (requested.header.guid);
+                err = ACAPI_Element_ChangeParameters (renamedGuids, &requested, nullptr, &renameMask);
+                if (err != NoError) {
+                    executionResults (CreateFailedExecutionResult (err, "Failed to change the name or the reference ID of the element. Every other requested setting was applied."));
+                    continue;
+                }
+            }
+
+            API_Element stored = {};
+            stored.header.guid = requested.header.guid;
+            err = ACAPI_Element_Get (&stored);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to read the element back after the change."));
+                continue;
+            }
+
+            GS::Array<GS::UniString> unapplied = GetUnappliedSectionElevationDetails (*details, requested.cutPlane, stored.cutPlane);
+            if (setsName || setsReferenceId) {
+                // What the Project Map shows: the name and the reference ID of the viewpoint's database.
+                API_DatabaseInfo viewpoint = {};
+                viewpoint.typeID = (typeID == API_CutPlaneID) ? APIWind_SectionID : APIWind_ElevationID;
+                viewpoint.databaseUnId = stored.cutPlane.segment.databaseID;
+                if (ACAPI_Window_GetDatabaseInfo (&viewpoint) == NoError) {
+                    if (setsName && GS::UniString (viewpoint.name) != GS::UniString (requested.cutPlane.segment.cutPlName)) {
+                        unapplied.Push ("name (on the Project Map viewpoint)");
+                    }
+                    if (setsReferenceId && GS::UniString (viewpoint.ref) != GS::UniString (requested.cutPlane.segment.cutPlIdStr)) {
+                        unapplied.Push ("referenceId (on the Project Map viewpoint)");
+                    }
+                }
+            }
+
+            if (!unapplied.IsEmpty ()) {
+                GS::UniString fields;
+                for (const GS::UniString& field : unapplied) {
+                    if (!fields.IsEmpty ()) {
+                        fields += ", ";
+                    }
+                    fields += field;
+                }
+                executionResults (CreateFailedExecutionResult (APIERR_REFUSEDPAR,
+                    GS::UniString ("Archicad did not apply ") + fields + ". Every other requested setting was applied."));
+                continue;
+            }
+            executionResults (CreateSuccessfulExecutionResult ());
         }
         return NoError;
     });

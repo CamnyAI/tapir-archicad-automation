@@ -12789,8 +12789,8 @@
         "type": "object",
         "description": "Every user-configurable setting of a Section or Elevation element (API_SectionSegment / API_CutPlaneType). Shared by CreateSections, CreateElevations and SetSectionsAndElevationsDetails; all fields are optional.",
         "properties": {
-            "name": { "type": "string", "description": "Name of the section/elevation. Taken into account by CreateSections and CreateElevations only: SetSectionsAndElevationsDetails reports success but Archicad keeps the old name." },
-            "referenceId": { "type": "string", "description": "The reference ID text. If it contains a '/' character, the text is split between the beginning and end marks. Taken into account by CreateSections and CreateElevations only: SetSectionsAndElevationsDetails reports success but Archicad keeps the old reference ID." },
+            "name": { "type": "string", "description": "Name of the section/elevation, also shown by its Project Map viewpoint. SetSectionsAndElevationsDetails renames the element and the viewpoint together. Archicad keeps at most 255 characters." },
+            "referenceId": { "type": "string", "description": "The reference ID text, also shown by its Project Map viewpoint. If it contains a '/' character, the text is split between the beginning and end marks. SetSectionsAndElevationsDetails changes it on the element and the viewpoint together." },
             "linePenIndex": { "type": "integer", "description": "Pen index of the section/elevation line." },
             "textPenIndex": { "type": "integer", "description": "Pen index of the marker text." },
             "lineTypeId": { "$ref": "#/AttributeId", "description": "Line type attribute of the section/elevation line." },
@@ -12863,11 +12863,11 @@
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Name of the section/elevation. Taken into account by CreateSections and CreateElevations only: SetSectionsAndElevationsDetails reports success but Archicad keeps the old name."
+                "description": "Name of the section/elevation, as its Project Map viewpoint shows it."
             },
             "referenceId": {
                 "type": "string",
-                "description": "The reference ID text. If it contains a '/' character, the text is split between the beginning and end marks. Taken into account by CreateSections and CreateElevations only: SetSectionsAndElevationsDetails reports success but Archicad keeps the old reference ID."
+                "description": "The reference ID text, as its Project Map viewpoint shows it. If it contains a '/' character, the text is split between the beginning and end marks."
             },
             "linePenIndex": {
                 "type": "integer",
