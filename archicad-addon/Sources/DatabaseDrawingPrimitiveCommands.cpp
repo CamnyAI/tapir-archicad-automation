@@ -123,11 +123,6 @@ GSErrCode OpenWindowOfDatabase (const API_DatabaseInfo& database)
     return err;
 }
 
-bool IsSameDatabase (const API_DatabaseInfo& db1, const API_DatabaseInfo& db2)
-{
-    return db1.typeID == db2.typeID && db1.databaseUnId == db2.databaseUnId && db1.index == db2.index;
-}
-
 // Which elements of the database to return; an empty list keeps every element.
 struct ElementFilter {
     GS::HashSet<API_ElemTypeID> types;
@@ -312,11 +307,11 @@ GS::Optional<GS::UniString> GetDrawingPrimitivesOfDatabaseCommand::GetInputParam
             },
             "openWindowIfNeeded": {
                 "type": "boolean",
-                "description": "Optional, true by default. A database whose window was not opened since the project was opened cannot be read in the background. With true its window is opened, read and closed again (Archicad 27 or later), and the window that was in front before comes back to the front; windowOpened in the response says so. With false the command fails for such a database instead."
+                "description": "Optional, true by default. A database whose window was not opened since the project was opened cannot be read in the background. With true its window is opened and read, and the window that was in front before comes back to the front; the opened window stays open behind it, since the Archicad API closes only an add-on's own custom windows. windowOpened in the response says so. With false the command fails for such a database instead."
             },
             "rebuild": {
                 "type": "boolean",
-                "description": "Optional, false by default. A section, elevation or interior elevation read in the background shows the model as it was when the database was last built, for example when its window was last shown, so later changes of the model are missing. With true the database is rebuilt in the background first (ACAPI_Database_RebuildCurrentDatabase, Archicad 27 or later), as Archicad does when the window comes to the front."
+                "description": "Optional, false by default. A section, elevation or interior elevation read in the background shows the model as it was when the database was last built, for example when its window was last shown, so later changes of the model are missing. Rebuilding it in the background (ACAPI_Database_RebuildCurrentDatabase on a database that is not in front) does not change that. With true the command brings the database's window to the front for a moment, where Archicad rebuilds it, rebuilds it there with ACAPI_Database_RebuildCurrentDatabase too, reads it and brings back the window that was in front; windowOpened is then true. Archicad 27 or later; not together with openWindowIfNeeded false."
             }
         },
         "additionalProperties": false,
@@ -381,7 +376,7 @@ GS::Optional<GS::UniString> GetDrawingPrimitivesOfDatabaseCommand::GetRawRespons
             },
             "windowOpened": {
                 "type": "boolean",
-                "description": "True when the database could not be read before its window was opened: the command opened its window, read it, closed it again (Archicad 27 or later) and brought back the window that was in front."
+                "description": "True when the command brought the database's window to the front to read it: the database could not be read before its window was opened, or rebuild was true. The window that was in front is brought back to the front; the database's window stays open behind it."
             },
             "elements": {
                 "type": "array",
@@ -488,6 +483,9 @@ GS::ObjectState GetDrawingPrimitivesOfDatabaseCommand::Execute (const GS::Object
         return CreateErrorResponse (APIERR_NOTSUPPORTED, "rebuild requires Archicad 27 or later.");
     }
 #endif
+    if (rebuild && !openWindowIfNeeded) {
+        return CreateErrorResponse (APIERR_BADPARS, "rebuild brings the window of the database to the front for a moment, which openWindowIfNeeded false does not allow.");
+    }
 
     API_DatabaseInfo startingDatabase = {};
     err = ACAPI_Database_GetCurrentDatabase (&startingDatabase);
@@ -497,16 +495,24 @@ GS::ObjectState GetDrawingPrimitivesOfDatabaseCommand::Execute (const GS::Object
     API_WindowInfo startingWindow = {};
     const bool hasStartingWindow = (ACAPI_Window_GetCurrentWindow (&startingWindow) == NoError);
 
+    // ACAPI_Database_RebuildCurrentDatabase on a section made current in the background returns
+    // NoError but leaves its section elements as they were (Archicad 30), so a rebuild brings the
+    // window to the front: Archicad rebuilds a section or elevation when its window comes to the
+    // front, and the explicit rebuild then runs on the front window.
     bool windowOpened = false;
-    err = ACAPI_Database_ChangeCurrentDatabase (&target);
-    if (err != NoError) {
-        if (!openWindowIfNeeded) {
+    if (!rebuild) {
+        err = ACAPI_Database_ChangeCurrentDatabase (&target);
+        if (err != NoError && !openWindowIfNeeded) {
             return CreateErrorResponse (err, "The database cannot be read before its window is opened. Pass openWindowIfNeeded true, or open it once with ChangeWindow.");
         }
+    }
+    if (rebuild || err != NoError) {
         const GSErrCode openErr = OpenWindowOfDatabase (target);
         if (openErr != NoError) {
             ACAPI_Database_ChangeCurrentDatabase (&startingDatabase);
-            return CreateErrorResponse (openErr, "The database cannot be read in the background, and opening its window failed.");
+            return CreateErrorResponse (openErr, rebuild
+                ? "Failed to open the window of the database to rebuild it."
+                : "The database cannot be read in the background, and opening its window failed.");
         }
         windowOpened = true;
         err = ACAPI_Database_ChangeCurrentDatabase (&target);
@@ -526,17 +532,11 @@ GS::ObjectState GetDrawingPrimitivesOfDatabaseCommand::Execute (const GS::Object
     }
 
     // Bring back what was current: the front window first, as ChangeWindow also changes the
-    // current database, then close the window this command opened, then the database.
-    if (windowOpened) {
-        if (hasStartingWindow) {
-            ACAPI_Window_ChangeWindow (&startingWindow);
-        }
-#ifdef ServerMainVers_2700
-        if (!hasStartingWindow || !IsSameDatabase (startingWindow, target)) {
-            API_WindowInfo openedWindow = target;
-            ACAPI_Window_CloseWindow (&openedWindow);
-        }
-#endif
+    // current database, then the database. The window opened here stays open behind the front
+    // window: ACAPI_Window_CloseWindow closes only the custom windows of an add-on (ACAPI_Database.h)
+    // and refuses a section or layout window with APIERR_REFUSEDPAR.
+    if (windowOpened && hasStartingWindow) {
+        ACAPI_Window_ChangeWindow (&startingWindow);
     }
     ACAPI_Database_ChangeCurrentDatabase (&startingDatabase);
 

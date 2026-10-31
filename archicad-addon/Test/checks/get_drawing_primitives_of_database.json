@@ -99,6 +99,48 @@
       ]
     },
     {
+      "id": "a second wall across the section, after the section was built",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": { "x": 0.0, "y": 1.0 },
+            "endCoordinate": { "x": 6.0, "y": 1.0 },
+            "zCoordinate": 0.0,
+            "height": 2.0,
+            "structureType": "Basic",
+            "thickness": 0.3,
+            "referenceLineLocation": "Center"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read it with rebuild",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${sdb}" }, "elementTypes": ["Wall"], "rebuild": true },
+      "expect": [
+        { "path": "windowOpened", "eq": true, "name": "its window was brought to the front" },
+        { "path": "elements", "len": 2, "name": "the new wall is drawn too" }
+      ]
+    },
+    {
+      "id": "front window after the rebuild",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        { "path": "currentWindowType", "eq": "FloorPlan", "name": "the floor plan is in front again" }
+      ]
+    },
+    {
+      "id": "rebuild without opening windows is refused",
+      "command": "GetDrawingPrimitivesOfDatabase",
+      "creates": false,
+      "params": { "databaseId": { "guid": "${sdb}" }, "rebuild": true, "openWindowIfNeeded": false },
+      "expect": [ { "path": "error.code", "exists": true } ]
+    },
+    {
       "id": "worksheet",
       "command": "CreateWorksheets",
       "creates": false,
