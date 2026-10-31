@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 // The pivot polygon of a multi-plane roof lives in the memo's additional polygon
 // (APIMemoMask_AdditionalPolygon); the first sub-polygon is the outline. Arcs are
@@ -796,6 +797,151 @@ GS::Optional<GS::UniString> GetAllElementsCommand::GetInputParametersSchema () c
         "additionalProperties": false,
         "required": []
     })";
+}
+
+GetModificationStampsOfElementsCommand::GetModificationStampsOfElementsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String GetModificationStampsOfElementsCommand::GetName () const
+{
+    return "GetModificationStampsOfElements";
+}
+
+GS::Optional<GS::UniString> GetModificationStampsOfElementsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elements": {
+                "$ref": "#/Elements",
+                "description": "The elements to get the modification stamps of. If omitted, every element GetAllElements returns without filters, in the same order."
+            },
+            "startIndex": {
+                "type": "integer",
+                "description": "The 0-based index of the first element to answer for, in elements or in the list of all elements. The default is 0.",
+                "minimum": 0
+            },
+            "maxCount": {
+                "type": "integer",
+                "description": "The most stamps one call returns. The default is 5000. To read them all, call again with startIndex increased by the number of stamps returned until it reaches totalCount.",
+                "minimum": 1
+            }
+        },
+        "additionalProperties": false,
+        "required": []
+    })";
+}
+
+GS::Optional<GS::UniString> GetModificationStampsOfElementsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "stamps": {
+                "type": "array",
+                "description": "The modification stamp of each element from startIndex on, aligned with elements (or with the list of all elements), or an error.",
+                "items": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "elementId": {
+                                    "$ref": "#/ElementId"
+                                },
+                                "modiStamp": {
+                                    "type": "string",
+                                    "description": "The modification stamp of the element, a 64-bit unsigned integer written in decimal (a JSON number cannot hold every value exactly). Archicad gives the element a new stamp whenever it changes, so a different value means the element changed."
+                                },
+                                "floorIndex": {
+                                    "type": "integer",
+                                    "description": "The index of the story the element belongs to."
+                                },
+                                "layerIndex": {
+                                    "type": "integer",
+                                    "description": "The attribute index of the layer of the element."
+                                },
+                                "type": {
+                                    "$ref": "#/ElementType"
+                                }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                                "elementId",
+                                "modiStamp",
+                                "floorIndex",
+                                "layerIndex",
+                                "type"
+                            ]
+                        },
+                        {
+                            "$ref": "#/ErrorItem"
+                        }
+                    ]
+                }
+            },
+            "totalCount": {
+                "type": "integer",
+                "description": "The number of elements in elements, or of all elements when elements is omitted: paging is over when startIndex plus the number of stamps returned reaches it."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "stamps",
+            "totalCount"
+        ]
+    })";
+}
+
+GS::ObjectState GetModificationStampsOfElementsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    Int32 startIndex = 0;
+    Int32 maxCount = 5000;
+    parameters.Get ("startIndex", startIndex);
+    parameters.Get ("maxCount", maxCount);
+    if (startIndex < 0 || maxCount < 1) {
+        return CreateErrorResponse (APIERR_BADPARS, "startIndex must be 0 or more and maxCount 1 or more.");
+    }
+
+    GS::Array<API_Guid> elemGuids;
+    GS::Array<GS::ObjectState> elements;
+    if (parameters.Get ("elements", elements)) {
+        elemGuids = elements.Transform<API_Guid> (GetGuidFromElementsArrayItem);
+    } else {
+        // The same list, in the same order, as GetAllElements without filters.
+        auto addElement = [&](const GS::ObjectState& elementId) {
+            elemGuids.Push (GetGuidFromElementsArrayItem (elementId));
+        };
+        const GSErrCode err = GetElementsFromCurrentDatabase (GS::ObjectState (), addElement);
+        if (err != NoError) {
+            return CreateErrorResponse (err, "Failed to list the elements of the current database.");
+        }
+    }
+
+    GS::ObjectState response;
+    const auto& stamps = response.AddList<GS::ObjectState> ("stamps");
+    const UIndex endIndex = static_cast<UIndex> (std::min<Int64> (elemGuids.GetSize (), static_cast<Int64> (startIndex) + maxCount));
+    for (UIndex i = static_cast<UIndex> (startIndex); i < endIndex; ++i) {
+        API_Elem_Head header = {};
+        header.guid = elemGuids[i];
+        const GSErrCode err = ACAPI_Element_GetHeader (&header);
+        if (err != NoError) {
+            stamps (CreateErrorResponse (err, "Failed to get the header of the element."));
+            continue;
+        }
+
+        GS::ObjectState stamp;
+        stamp.Add ("elementId", CreateGuidObjectState (header.guid));
+        stamp.Add ("modiStamp", GS::UniString (std::to_string (header.modiStamp).c_str ()));
+        stamp.Add ("floorIndex", static_cast<Int32> (header.floorInd));
+        stamp.Add ("layerIndex", GetAttributeIndex (header.layer));
+        stamp.Add ("type", GetElementTypeNonLocalizedName (GetElemTypeId (header)));
+        stamps (stamp);
+    }
+    response.Add ("totalCount", static_cast<Int32> (elemGuids.GetSize ()));
+
+    return response;
 }
 
 GetElementTypeNamesCommand::GetElementTypeNamesCommand () :

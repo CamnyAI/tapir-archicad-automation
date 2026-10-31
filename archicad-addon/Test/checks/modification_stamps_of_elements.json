@@ -1,0 +1,170 @@
+{
+  "title": "GetModificationStampsOfElements gives a new stamp to a moved wall only, pages through all elements and answers an unknown guid with an error",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "two walls",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": {"x": 720.0, "y": 720.0},
+            "endCoordinate": {"x": 724.0, "y": 720.0},
+            "zCoordinate": 0.0,
+            "height": 3.0,
+            "thickness": 0.3
+          },
+          {
+            "begCoordinate": {"x": 720.0, "y": 730.0},
+            "endCoordinate": {"x": 724.0, "y": 730.0},
+            "zCoordinate": 0.0,
+            "height": 3.0,
+            "thickness": 0.3
+          }
+        ]
+      },
+      "save": {
+        "w1": "elements[0].elementId.guid",
+        "w2": "elements[1].elementId.guid"
+      }
+    },
+    {
+      "id": "stamps of the walls",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {"elementId": {"guid": "${w1}"}},
+          {"elementId": {"guid": "${w2}"}}
+        ]
+      },
+      "expect": [
+        {"path": "stamps", "len": 2, "name": "one stamp per element"},
+        {"path": "totalCount", "eq": 2, "name": "totalCount is the number of elements given"},
+        {"path": "stamps[0].type", "eq": "Wall", "name": "the type"},
+        {"path": "stamps[0].floorIndex", "eq": 0, "name": "the story"},
+        {"path": "stamps[0].layerIndex", "exists": true, "name": "the layer"}
+      ],
+      "save": {
+        "id1": "stamps[0].elementId.guid",
+        "s1": "stamps[0].modiStamp",
+        "s2": "stamps[1].modiStamp"
+      }
+    },
+    {
+      "id": "the stamps are aligned with the input",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {"elementId": {"guid": "${id1}"}}
+        ]
+      },
+      "expect": [
+        {"path": "stamps[0].type", "eq": "Wall", "name": "the element answered"},
+        {"expr": "${s1}", "gt": 0, "name": "a stamp is a positive decimal number"}
+      ],
+      "save": {
+        "s1again": "stamps[0].modiStamp"
+      }
+    },
+    {
+      "id": "move the first wall",
+      "command": "MoveElements",
+      "creates": false,
+      "params": {
+        "elementsWithMoveVectors": [
+          {
+            "elementId": {"guid": "${w1}"},
+            "moveVector": {"x": 0.0, "y": 1.0, "z": 0.0}
+          }
+        ]
+      }
+    },
+    {
+      "id": "stamps after the move",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {"elementId": {"guid": "${w1}"}},
+          {"elementId": {"guid": "${w2}"}}
+        ]
+      },
+      "save": {
+        "s1moved": "stamps[0].modiStamp",
+        "s2kept": "stamps[1].modiStamp"
+      }
+    },
+    {
+      "id": "only the moved wall has a new stamp",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "elements": []
+      },
+      "expect": [
+        {"expr": "${s1again} - ${s1}", "eq": 0, "name": "an unchanged element keeps its stamp between calls"},
+        {"expr": "${s1moved} - ${s1}", "gt": 0, "name": "the moved wall has a higher stamp"},
+        {"expr": "${s2kept} - ${s2}", "eq": 0, "name": "the other wall keeps its stamp"},
+        {"path": "stamps", "len": 0, "name": "an empty elements list gives no stamps"},
+        {"path": "totalCount", "eq": 0, "name": "and a totalCount of 0"}
+      ]
+    },
+    {
+      "id": "first page of all elements",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "maxCount": 1
+      },
+      "expect": [
+        {"path": "stamps", "len": 1, "name": "maxCount limits the page"},
+        {"path": "totalCount", "gt": 1, "name": "all elements are counted, the two walls at least"}
+      ],
+      "save": {
+        "total": "totalCount"
+      }
+    },
+    {
+      "id": "second page of all elements",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "startIndex": 1,
+        "maxCount": 1
+      },
+      "expect": [
+        {"path": "stamps", "len": 1, "name": "startIndex moves the page"},
+        {"path": "stamps[0].modiStamp", "exists": true, "name": "with a stamp"}
+      ]
+    },
+    {
+      "id": "past the last element",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "startIndex": "${total}"
+      },
+      "expect": [
+        {"path": "stamps", "len": 0, "name": "no stamps past the end"}
+      ]
+    },
+    {
+      "id": "an unknown guid",
+      "command": "GetModificationStampsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {"elementId": {"guid": "00000000-1111-2222-3333-444444444444"}},
+          {"elementId": {"guid": "${w2}"}}
+        ]
+      },
+      "expect": [
+        {"path": "stamps", "len": 2, "name": "still aligned with the input"},
+        {"path": "stamps[0].error.code", "exists": true, "name": "an error for the unknown guid"},
+        {"path": "stamps[1].type", "eq": "Wall", "name": "the known wall still answered"}
+      ]
+    }
+  ]
+}

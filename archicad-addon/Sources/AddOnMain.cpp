@@ -587,6 +587,10 @@ GSErrCode Initialize (void)
             elementCommands, "1.0.7",
             "Returns the identifier of all elements on the plan. Use the optional filter parameter for filtering. Objects that belong to another element (zone stamps, the parts of stairs and railings) are left out unless the IncludeSubElemObjects filter is given."
         );
+        err |= RegisterCommand<GetModificationStampsOfElementsCommand> (
+            elementCommands, "1.7.4",
+            "Returns the modification stamp, story, layer and type of the given elements, or of every element GetAllElements returns. A stamp changes whenever its element changes, so a script that keeps an external copy of the model can compare stamps to find what to re-read. Paged: at most maxCount (5000 by default) stamps per call from startIndex on, with totalCount telling how many there are."
+        );
         err |= RegisterCommand<CaptureElementStateCommand> (
             elementCommands, "1.7.4",
             "Captures the current state of the elements of the project and returns a stateId for it, so that GetElementChangesSince can later list what was created, modified and deleted since. The optional type selects how changes are detected (modification stamps by default, or the 3D model of the 3D window, which is brought to the front for the call because Archicad only updates its model there). The state is kept in a file in the temporary folder for the Archicad session only: it is lost when the project is closed or Archicad restarts, and ReleaseElementState frees it earlier."
