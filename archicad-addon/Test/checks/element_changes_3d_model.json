@@ -1,0 +1,420 @@
+{
+  "title": "GetElementChangesSince finds 3DModel changes with the floor plan in front, and brings the floor plan back",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "floor plan in front",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": {
+        "windowType": "FloorPlan"
+      },
+      "expect": [
+        {
+          "path": "success",
+          "eq": true,
+          "name": "accepted"
+        }
+      ]
+    },
+    {
+      "id": "state before the wall",
+      "command": "CaptureElementState",
+      "creates": false,
+      "params": {
+        "type": "3DModel"
+      },
+      "save": {
+        "s1": "stateId"
+      },
+      "expect": [
+        {
+          "path": "type",
+          "eq": "3DModel",
+          "name": "captured with the type asked for"
+        }
+      ]
+    },
+    {
+      "id": "new wall",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": {
+              "x": 720.0,
+              "y": 720.0
+            },
+            "endCoordinate": {
+              "x": 724.0,
+              "y": 720.0
+            },
+            "zCoordinate": 0.0,
+            "height": 3.0,
+            "thickness": 0.3
+          }
+        ]
+      },
+      "save": {
+        "w1": "elements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "changes since the first state",
+      "command": "GetElementChangesSince",
+      "creates": false,
+      "params": {
+        "stateId": "${s1}"
+      },
+      "expect": [
+        {
+          "path": "newElements",
+          "len": 1,
+          "name": "one new element"
+        },
+        {
+          "path": "modifiedElements",
+          "len": 0,
+          "name": "nothing modified"
+        },
+        {
+          "path": "deletedElements",
+          "len": 0,
+          "name": "nothing deleted"
+        }
+      ],
+      "save": {
+        "listedNew": "newElements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "the listed element is the new wall",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${listedNew}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "Wall",
+          "name": "a wall"
+        },
+        {
+          "path": "detailsOfElements[0].details.begCoordinate.x",
+          "approx": 720.0,
+          "tol": 0.001,
+          "name": "the check's wall"
+        },
+        {
+          "path": "detailsOfElements[0].details.begCoordinate.y",
+          "approx": 720.0,
+          "tol": 0.001,
+          "name": "where it was created"
+        }
+      ]
+    },
+    {
+      "id": "the window in front afterwards",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "params": {},
+      "expect": [
+        {
+          "path": "currentWindowType",
+          "eq": "FloorPlan",
+          "name": "the floor plan is back in front"
+        }
+      ]
+    },
+    {
+      "id": "state with the wall",
+      "command": "CaptureElementState",
+      "creates": false,
+      "params": {
+        "type": "3DModel"
+      },
+      "save": {
+        "s2": "stateId"
+      }
+    },
+    {
+      "id": "move the wall",
+      "command": "MoveElements",
+      "creates": false,
+      "params": {
+        "elementsWithMoveVectors": [
+          {
+            "elementId": {
+              "guid": "${w1}"
+            },
+            "moveVector": {
+              "x": 0.0,
+              "y": 1.0,
+              "z": 0.0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "changes since the second state",
+      "command": "GetElementChangesSince",
+      "creates": false,
+      "params": {
+        "stateId": "${s2}"
+      },
+      "expect": [
+        {
+          "path": "newElements",
+          "len": 0,
+          "name": "nothing new"
+        },
+        {
+          "path": "modifiedElements",
+          "len": 1,
+          "name": "one modified element"
+        },
+        {
+          "path": "deletedElements",
+          "len": 0,
+          "name": "nothing deleted"
+        }
+      ],
+      "save": {
+        "listedModified": "modifiedElements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "the listed element is the moved wall",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${listedModified}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "Wall",
+          "name": "a wall"
+        },
+        {
+          "path": "detailsOfElements[0].details.begCoordinate.x",
+          "approx": 720.0,
+          "tol": 0.001,
+          "name": "the check's wall"
+        },
+        {
+          "path": "detailsOfElements[0].details.begCoordinate.y",
+          "approx": 721.0,
+          "tol": 0.001,
+          "name": "after the move"
+        }
+      ]
+    },
+    {
+      "id": "between the first two states",
+      "command": "GetElementChangesSince",
+      "creates": false,
+      "params": {
+        "stateId": "${s1}",
+        "toStateId": "${s2}"
+      },
+      "expect": [
+        {
+          "path": "newElements",
+          "len": 1,
+          "name": "one new element"
+        }
+      ],
+      "save": {
+        "listedBetween": "newElements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "the listed element is the wall, moved since",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${listedBetween}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].type",
+          "eq": "Wall",
+          "name": "a wall"
+        },
+        {
+          "path": "detailsOfElements[0].details.begCoordinate.x",
+          "approx": 720.0,
+          "tol": 0.001,
+          "name": "the check's wall"
+        },
+        {
+          "path": "detailsOfElements[0].details.begCoordinate.y",
+          "approx": 721.0,
+          "tol": 0.001,
+          "name": "after the move"
+        }
+      ]
+    },
+    {
+      "id": "state with the moved wall",
+      "command": "CaptureElementState",
+      "creates": false,
+      "params": {
+        "type": "3DModel"
+      },
+      "save": {
+        "s3": "stateId"
+      }
+    },
+    {
+      "id": "new element ID, the 3D model stays the same",
+      "command": "SetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elementsWithDetails": [
+          {
+            "elementId": {
+              "guid": "${w1}"
+            },
+            "details": {
+              "id": "TapirCheck 3D"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "an ID change is not a 3D change",
+      "command": "GetElementChangesSince",
+      "creates": false,
+      "params": {
+        "stateId": "${s3}"
+      },
+      "expect": [
+        {
+          "path": "modifiedElements",
+          "len": 0,
+          "name": "nothing modified in 3D"
+        }
+      ]
+    },
+    {
+      "id": "delete the wall",
+      "command": "DeleteElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${w1}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "changes since the third state",
+      "command": "GetElementChangesSince",
+      "creates": false,
+      "params": {
+        "stateId": "${s3}"
+      },
+      "expect": [
+        {
+          "path": "newElements",
+          "len": 0,
+          "name": "nothing new"
+        },
+        {
+          "path": "deletedElements",
+          "len": 1,
+          "name": "one deleted element"
+        }
+      ],
+      "save": {
+        "listedDeleted": "deletedElements[0].elementId.guid"
+      }
+    },
+    {
+      "id": "the listed element is gone",
+      "command": "GetDetailsOfElements",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${listedDeleted}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "detailsOfElements[0].error",
+          "exists": true,
+          "name": "deleted from the project"
+        }
+      ]
+    },
+    {
+      "id": "the window in front at the end",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "params": {},
+      "expect": [
+        {
+          "path": "currentWindowType",
+          "eq": "FloorPlan",
+          "name": "still the floor plan"
+        }
+      ]
+    }
+  ],
+  "teardown": [
+    {
+      "command": "ReleaseElementState",
+      "params": {
+        "stateId": "${s1}"
+      }
+    },
+    {
+      "command": "ReleaseElementState",
+      "params": {
+        "stateId": "${s2}"
+      }
+    },
+    {
+      "command": "ReleaseElementState",
+      "params": {
+        "stateId": "${s3}"
+      }
+    },
+    {
+      "command": "ChangeWindow",
+      "params": {
+        "windowType": "FloorPlan"
+      }
+    }
+  ]
+}
