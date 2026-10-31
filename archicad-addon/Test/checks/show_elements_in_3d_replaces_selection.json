@@ -1,0 +1,175 @@
+{
+  "title": "ShowElementsIn3D opens the 3D window on the given elements only, keeps the selection on a wrong guid, and shows all without elements",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "two walls",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": {
+              "x": 700,
+              "y": 700
+            },
+            "endCoordinate": {
+              "x": 704,
+              "y": 700
+            },
+            "zCoordinate": 0,
+            "height": 2.5,
+            "thickness": 0.2
+          },
+          {
+            "begCoordinate": {
+              "x": 700,
+              "y": 705
+            },
+            "endCoordinate": {
+              "x": 704,
+              "y": 705
+            },
+            "zCoordinate": 0,
+            "height": 2.5,
+            "thickness": 0.2
+          }
+        ]
+      },
+      "save": {
+        "w1": "elements[0].elementId.guid",
+        "w2": "elements[1].elementId.guid"
+      }
+    },
+    {
+      "id": "select the first wall",
+      "command": "ChangeSelectionOfElements",
+      "creates": false,
+      "params": {
+        "addElementsToSelection": [
+          {
+            "elementId": {
+              "guid": "${w1}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "show the second wall in 3D",
+      "command": "ShowElementsIn3D",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "${w2}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "success",
+          "eq": true,
+          "name": "accepted"
+        }
+      ]
+    },
+    {
+      "id": "the 3D window is in front",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        {
+          "path": "currentWindowType",
+          "eq": "3DModel"
+        }
+      ]
+    },
+    {
+      "id": "back to the floor plan, where the selection is read",
+      "command": "ChangeWindow",
+      "creates": false,
+      "params": {
+        "windowType": "FloorPlan"
+      }
+    },
+    {
+      "id": "the second wall replaced the selection",
+      "command": "GetSelectedElements",
+      "creates": false,
+      "expect": [
+        {
+          "path": "elements",
+          "len": 1,
+          "name": "one selected element"
+        }
+      ]
+    },
+    {
+      "id": "a guid that is not an element",
+      "command": "ShowElementsIn3D",
+      "creates": false,
+      "params": {
+        "elements": [
+          {
+            "elementId": {
+              "guid": "00000000-0000-0000-0000-00000000BEEF"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "success",
+          "eq": false,
+          "name": "refused"
+        }
+      ]
+    },
+    {
+      "id": "the selection is kept after the refusal",
+      "command": "GetSelectedElements",
+      "creates": false,
+      "expect": [
+        {
+          "path": "elements",
+          "len": 1,
+          "name": "still one selected element"
+        }
+      ]
+    },
+    {
+      "id": "show all in 3D",
+      "command": "ShowElementsIn3D",
+      "creates": false,
+      "params": {},
+      "expect": [
+        {
+          "path": "success",
+          "eq": true,
+          "name": "accepted"
+        }
+      ]
+    },
+    {
+      "id": "the 3D window is still in front",
+      "command": "GetCurrentWindowType",
+      "creates": false,
+      "expect": [
+        {
+          "path": "currentWindowType",
+          "eq": "3DModel"
+        }
+      ]
+    }
+  ],
+  "teardown": [
+    {
+      "command": "ChangeWindow",
+      "params": {
+        "windowType": "FloorPlan"
+      }
+    }
+  ]
+}

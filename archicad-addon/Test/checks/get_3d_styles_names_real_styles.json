@@ -1,0 +1,63 @@
+{
+  "title": "Get3DStyles returns the current 3D style and style names that Get3DStyleDetails can read",
+  "minTapir": "1.7.4",
+  "minArchicad": "27",
+  "steps": [
+    {
+      "id": "the 3D styles",
+      "command": "Get3DStyles",
+      "creates": false,
+      "save": {
+        "current": "currentStyleName",
+        "first": "styleNames[0]",
+        "second": "styleNames[1]"
+      },
+      "expect": [
+        {
+          "path": "currentStyleName",
+          "exists": true,
+          "name": "current style named"
+        },
+        {
+          "path": "styleNames[1]",
+          "exists": true,
+          "name": "at least two styles"
+        }
+      ]
+    },
+    {
+      "id": "the returned names are styles of the project",
+      "command": "Get3DStyleDetails",
+      "creates": false,
+      "params": {
+        "names": [
+          "${current}",
+          "${first}",
+          "${second}"
+        ]
+      },
+      "expect": [
+        {
+          "path": "styles[0].error",
+          "exists": false,
+          "name": "current style readable"
+        },
+        {
+          "path": "styles[0].model3D",
+          "exists": true,
+          "name": "current style has a model type"
+        },
+        {
+          "path": "styles[1].error",
+          "exists": false,
+          "name": "first listed style readable"
+        },
+        {
+          "path": "styles[2].error",
+          "exists": false,
+          "name": "second listed style readable"
+        }
+      ]
+    }
+  ]
+}
