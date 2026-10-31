@@ -42,8 +42,10 @@ public:
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
 
-// Called from AddOnMain.cpp: Initialize installs the project event handler that drops every stored
-// state when the project is closed or another one is opened; FreeData drops them when the add-on
+// Called from AddOnMain.cpp: its project event handler (Archicad keeps one per add-on) passes the
+// ElementStateProjectEvents to ReleaseElementStatesOnProjectEvent, which drops every stored state
+// when the project is closed or another one is opened; FreeData drops them when the add-on
 // unloads, so the state files never outlive the Archicad session.
-GSErrCode InstallElementStateProjectEventHandler ();
+GSFlags   ElementStateProjectEvents ();
+void      ReleaseElementStatesOnProjectEvent (API_NotifyEventID notifID);
 void      ReleaseAllElementStates ();

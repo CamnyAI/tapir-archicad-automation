@@ -1,0 +1,162 @@
+{
+  "title": "SetElementNotificationClient takes the selection, project event and user input options; selecting with such a client registered works",
+  "minTapir": "1.7.4",
+  "steps": [
+    {
+      "id": "register a client for selection, project and user input events only",
+      "command": "SetElementNotificationClient",
+      "creates": false,
+      "params": {
+        "host": "127.0.0.1",
+        "port": 9,
+        "notifyOnNewElement": false,
+        "notifyOnModificationOfAnElement": false,
+        "notifyOnReservationChanges": false,
+        "notifyOnSelectionChange": true,
+        "maxSelectedElementIds": 1,
+        "notifyOnProjectEvents": true,
+        "notifyOnUserInput": true
+      },
+      "expect": [
+        {
+          "path": "success",
+          "eq": true
+        }
+      ]
+    },
+    {
+      "id": "two walls",
+      "command": "CreateWalls",
+      "params": {
+        "wallsData": [
+          {
+            "begCoordinate": {
+              "x": 700,
+              "y": 700
+            },
+            "endCoordinate": {
+              "x": 703,
+              "y": 700
+            },
+            "zCoordinate": 0,
+            "height": 2.5,
+            "thickness": 0.2
+          },
+          {
+            "begCoordinate": {
+              "x": 700,
+              "y": 705
+            },
+            "endCoordinate": {
+              "x": 703,
+              "y": 705
+            },
+            "zCoordinate": 0,
+            "height": 2.5,
+            "thickness": 0.2
+          }
+        ]
+      },
+      "save": {
+        "w1": "elements[0].elementId.guid",
+        "w2": "elements[1].elementId.guid"
+      }
+    },
+    {
+      "id": "select both",
+      "command": "ChangeSelectionOfElements",
+      "creates": false,
+      "params": {
+        "addElementsToSelection": [
+          {
+            "elementId": {
+              "guid": "${w1}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${w2}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResultsOfAddToSelection[0].success",
+          "eq": true
+        },
+        {
+          "path": "executionResultsOfAddToSelection[1].success",
+          "eq": true
+        }
+      ]
+    },
+    {
+      "id": "the selection is there",
+      "command": "GetSelectedElements",
+      "creates": false,
+      "params": {},
+      "expect": [
+        {
+          "path": "elements",
+          "len": 2
+        }
+      ]
+    },
+    {
+      "id": "deselect both",
+      "command": "ChangeSelectionOfElements",
+      "creates": false,
+      "params": {
+        "removeElementsFromSelection": [
+          {
+            "elementId": {
+              "guid": "${w1}"
+            }
+          },
+          {
+            "elementId": {
+              "guid": "${w2}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "path": "executionResultsOfRemoveFromSelection[0].success",
+          "eq": true
+        }
+      ]
+    },
+    {
+      "id": "remove the client",
+      "command": "RemoveElementNotificationClient",
+      "creates": false,
+      "params": {
+        "host": "127.0.0.1",
+        "port": 9
+      },
+      "expect": [
+        {
+          "path": "success",
+          "eq": true
+        }
+      ]
+    },
+    {
+      "id": "it is gone",
+      "command": "RemoveElementNotificationClient",
+      "creates": false,
+      "params": {
+        "host": "127.0.0.1",
+        "port": 9
+      },
+      "expect": [
+        {
+          "path": "success",
+          "eq": false
+        }
+      ]
+    }
+  ]
+}

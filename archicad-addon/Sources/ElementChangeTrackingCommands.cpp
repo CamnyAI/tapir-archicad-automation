@@ -165,7 +165,14 @@ GS::ObjectState Front3DWindowError (GSErrCode err)
     return CreateErrorResponse (err, "The 3DModel state is the 3D model of the 3D window, which Archicad only updates while the 3D window is in front, and the 3D window could not be brought to the front (or rebuilt there).");
 }
 
-GSErrCode ProjectEventHandler (API_NotifyEventID notifID, Int32 /*param*/)
+} // namespace
+
+GSFlags ElementStateProjectEvents ()
+{
+    return APINotify_New | APINotify_Open | APINotify_Close | APINotify_Quit;
+}
+
+void ReleaseElementStatesOnProjectEvent (API_NotifyEventID notifID)
 {
     switch (notifID) {
         case APINotify_New:
@@ -177,14 +184,6 @@ GSErrCode ProjectEventHandler (API_NotifyEventID notifID, Int32 /*param*/)
         default:
             break;
     }
-    return NoError;
-}
-
-} // namespace
-
-GSErrCode InstallElementStateProjectEventHandler ()
-{
-    return ACAPI_ProjectOperation_CatchProjectEvent (APINotify_New | APINotify_Open | APINotify_Close | APINotify_Quit, ProjectEventHandler);
 }
 
 void ReleaseAllElementStates ()
