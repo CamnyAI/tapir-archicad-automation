@@ -33,11 +33,18 @@ jobs:
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     - name: Check the tag against the add-on version
       run: |
         version=$(sed -n 's/^#define ADDON_VERSION "\(.*\)"$/\1/p' archicad-addon/Sources/AddOnVersion.hpp)
         if [ "$version" != "$GITHUB_REF_NAME" ]; then
           echo "::error::The tag is $GITHUB_REF_NAME but AddOnVersion.hpp says $version."
+          exit 1
+        fi
+        # Releases are cut from main.
+        if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          echo "::error::$GITHUB_REF_NAME points at a commit that is not on main."
           exit 1
         fi
     - name: Read the DevKit list
@@ -236,12 +243,13 @@ jobs:
           echo "::error::RenzoArchicad_AC30_Mac.zip is missing: the required Archicad 30 macOS build failed."
           exit 1
         fi
-    - name: Publish the release
+    # A draft until Renzo's /release skill publishes it with the desktop that installs it.
+    - name: Create the release
       if: steps.secrets.outputs.present == 'true'
       uses: softprops/action-gh-release@v2
       with:
         files: artifacts/*
         fail_on_unmatched_files: true
-        draft: false
+        draft: true
         prerelease: false
         generate_release_notes: false
