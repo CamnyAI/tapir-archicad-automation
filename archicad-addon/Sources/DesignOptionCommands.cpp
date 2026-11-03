@@ -1,4 +1,5 @@
 #include "DesignOptionCommands.hpp"
+#include "CurrentViewSettingsCommands.hpp"
 #include "MigrationHelper.hpp"
 
 #ifdef ServerMainVers_2700
@@ -2199,6 +2200,300 @@ GS::ObjectState DeleteDesignOptionCombinationsCommand::Execute (const GS::Object
 #else
     UNUSED_PARAMETER (parameters);
     return CreateErrorResponse (APIERR_NOTSUPPORTED, "This command requires Archicad 29 or newer.");
+#endif
+}
+
+#ifdef ServerMainVers_2900
+namespace {
+
+// The API reads and writes the design option combination of navigator views only
+// (DesignOptionManager::GetDesignOptionCombinationSettingsOf). The current window is reached
+// through a temporary View Map view of its Project Map item, which takes the window's current
+// settings (as SetCurrentPenTable does), made in a temporary folder; both are deleted when this
+// goes out of scope. The Project Map item's own settings are not the window's: tested in
+// Archicad 30, setting them leaves the window as it was.
+class TemporaryWindowView
+{
+public:
+    TemporaryWindowView () = default;
+    TemporaryWindowView (const TemporaryWindowView&) = delete;
+    TemporaryWindowView& operator= (const TemporaryWindowView&) = delete;
+    ~TemporaryWindowView ()
+    {
+        bool silentMode = true;
+        if (viewGuid != APINULLGuid) {
+            ACAPI_Navigator_DeleteNavigatorView (&viewGuid, &silentMode);
+        }
+        if (folderGuid != APINULLGuid) {
+            ACAPI_Navigator_DeleteNavigatorView (&folderGuid, &silentMode);
+        }
+    }
+
+    GSErrCode Create (const API_Guid& projectMapItemGuid, GS::UniString& failure)
+    {
+        API_NavigatorItem folderItem = {};
+        folderItem.itemType   = API_FolderNavItem;
+        folderItem.mapId      = API_PublicViewMap;
+        folderItem.customName = true;
+        GS::ucscpy (folderItem.uName, GS::UniString ("Temporary view for the design option combination").ToUStr ());
+        GSErrCode err = ACAPI_Navigator_NewNavigatorView (&folderItem, nullptr, nullptr, nullptr);
+        if (err != NoError) {
+            failure = "Failed to create a temporary View Map folder. In a Teamwork project the View Map must be reserved.";
+            return err;
+        }
+        folderGuid = folderItem.guid;
+        API_Guid source = projectMapItemGuid;
+        err = ACAPI_Navigator_CloneProjectMapItemToViewMap (&source, &folderGuid, &viewGuid);
+        if (err != NoError) {
+            viewGuid = APINULLGuid;
+            failure = "Failed to create a temporary view of the current window.";
+        }
+        return err;
+    }
+
+    API_Guid folderGuid = APINULLGuid;
+    API_Guid viewGuid = APINULLGuid;
+};
+
+GSErrCode GetProjectMapItemOfWindow (API_NavigatorItem& item, GS::UniString& failure)
+{
+    API_WindowInfo window = {};
+    GSErrCode err = ACAPI_Window_GetCurrentWindow (&window);
+    if (err != NoError) {
+        failure = "Failed to get the current window.";
+        return err;
+    }
+    err = FindProjectMapItemOfCurrentWindow (window, item);
+    if (err != NoError) {
+        failure = "The current window is not a model window with a Project Map item: make the floor plan the current window first.";
+    }
+    return err;
+}
+
+GS::ObjectState DescribeCombinationOfView (const DesignOptionCombinationViewSettings& settings)
+{
+    const auto status = settings.GetStatus ();
+    if (status.IsErr ()) {
+        return CreateErrorResponse (status.UnwrapErr ().kind, "Unable to read the design option combination status of the window.");
+    }
+    GS::ObjectState response;
+    if (std::holds_alternative<DesignOptionCombinationViewSettings::Standard> (*status)) {
+        const auto& combination = std::get<DesignOptionCombinationViewSettings::Standard> (*status).combination;
+        response.Add ("designOptionCombinationId", CreateGuidObjectState (combination.GetGuid ()));
+        response.Add ("name", combination.GetName ());
+        response.Add ("status", "Standard");
+    } else if (std::holds_alternative<DesignOptionCombinationViewSettings::Custom> (*status)) {
+        response.Add ("name", settings.GetName ());
+        response.Add ("status", "Custom");
+    } else if (std::holds_alternative<DesignOptionCombinationViewSettings::MainModelOnly> (*status)) {
+        response.Add ("name", settings.GetName ());
+        response.Add ("status", "MainModelOnly");
+    } else {
+        response.Add ("name", settings.GetName ());
+        response.Add ("status", "Missing");
+    }
+    return response;
+}
+
+} // namespace
+#endif
+
+GetDesignOptionCombinationOfWindowCommand::GetDesignOptionCombinationOfWindowCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String GetDesignOptionCombinationOfWindowCommand::GetName () const
+{
+    return "GetDesignOptionCombinationOfWindow";
+}
+
+GS::Optional<GS::UniString> GetDesignOptionCombinationOfWindowCommand::GetInputParametersSchema () const
+{
+    return {};
+}
+
+GS::Optional<GS::UniString> GetDesignOptionCombinationOfWindowCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "designOptionCombinationId": {
+                "$ref": "#/DesignOptionCombinationId",
+                "description": "The design option combination the window shows. Absent (null) when the window shows only the main model, a custom set of design options or a deleted combination."
+            },
+            "name": {
+                "type": "string",
+                "description": "The name of the combination, or the name Archicad gives the window's setting when there is no combination."
+            },
+            "status": {
+                "type": "string",
+                "enum": ["Standard", "MainModelOnly", "Custom", "Missing"],
+                "description": "Standard: the window shows designOptionCombinationId. MainModelOnly: only the main model, no design option. Custom: a set of design options without a name. Missing: the combination of the window was deleted."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "status"
+        ]
+    })";
+}
+
+GS::ObjectState GetDesignOptionCombinationOfWindowCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+#ifdef ServerMainVers_2900
+    ACAPI::Result<DesignOptionManager> manager = CreateDesignOptionManager ();
+    if (manager.IsErr ()) {
+        return CreateErrorResponse (manager.UnwrapErr ().kind, "Unable to read the design option combination of the window.");
+    }
+    UNUSED_PARAMETER (parameters);
+
+    API_NavigatorItem item = {};
+    GS::UniString failure;
+    GSErrCode err = GetProjectMapItemOfWindow (item, failure);
+    if (err != NoError) {
+        return CreateErrorResponse (err, failure);
+    }
+
+    // The settings of the Project Map item itself are not the window's: they can be set without
+    // the window changing. A view cloned from the item takes the window's current settings.
+    TemporaryWindowView temporaryView;
+    err = temporaryView.Create (item.guid, failure);
+    if (err != NoError) {
+        return CreateErrorResponse (err, failure);
+    }
+    auto view = ACAPI::ModelViews::FindViewByGuid (temporaryView.viewGuid);
+    if (view.IsErr ()) {
+        return CreateErrorResponse (view.UnwrapErr ().kind, "Unable to read the temporary view of the window.");
+    }
+    auto settings = manager->GetDesignOptionCombinationSettingsOf (*view);
+    if (settings.IsErr ()) {
+        return CreateErrorResponse (settings.UnwrapErr ().kind, "Unable to read the design option combination of the window.");
+    }
+    return DescribeCombinationOfView (*settings);
+#else
+    UNUSED_PARAMETER (parameters);
+    return CreateErrorResponse (APIERR_NOTSUPPORTED, "This command requires Archicad 29 or newer.");
+#endif
+}
+
+SetDesignOptionCombinationOfWindowCommand::SetDesignOptionCombinationOfWindowCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String SetDesignOptionCombinationOfWindowCommand::GetName () const
+{
+    return "SetDesignOptionCombinationOfWindow";
+}
+
+GS::Optional<GS::UniString> SetDesignOptionCombinationOfWindowCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "designOptionCombinationId": {
+                "$ref": "#/DesignOptionCombinationId",
+                "description": "The design option combination the window should show, as GetDesignOptionCombinations lists it."
+            },
+            "mainModelOnly": {
+                "type": "boolean",
+                "description": "true makes the window show only the main model, without any design option (what GetDesignOptionCombinationOfWindow reports as status MainModelOnly)."
+            }
+        },
+        "additionalProperties": false,
+        "oneOf": [
+            { "required": ["designOptionCombinationId"] },
+            { "required": ["mainModelOnly"] }
+        ]
+    })";
+}
+
+GS::Optional<GS::UniString> SetDesignOptionCombinationOfWindowCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "$ref": "#/ExecutionResult"
+    })";
+}
+
+GS::ObjectState SetDesignOptionCombinationOfWindowCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+#ifdef ServerMainVers_2900
+    bool mainModelOnly = false;
+    parameters.Get ("mainModelOnly", mainModelOnly);
+    const bool hasCombination = parameters.Contains ("designOptionCombinationId");
+    if (mainModelOnly == hasCombination) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "Exactly one of 'designOptionCombinationId' and 'mainModelOnly': true is required.");
+    }
+    ACAPI::Result<DesignOptionManager> manager = CreateDesignOptionManager ();
+    if (manager.IsErr ()) {
+        return CreateFailedExecutionResult (manager.UnwrapErr ().kind, "Unable to set the design option combination of the window.");
+    }
+    auto allDesignOptionCombinations = manager->GetDesignOptionCombinations ();
+    if (allDesignOptionCombinations.IsErr ()) {
+        return CreateFailedExecutionResult (allDesignOptionCombinations.UnwrapErr ().kind, "Unable to read the design option combinations.");
+    }
+    DesignOptionCombination* combinationPtr = nullptr;
+    if (hasCombination) {
+        const GS::Guid combinationGuid = APIGuid2GSGuid (GetGuidFromArrayItem ("designOptionCombinationId", parameters));
+        if (combinationGuid.IsNull ()) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, "Missing or invalid 'designOptionCombinationId'.");
+        }
+        combinationPtr = FindDesignOptionItemByGuid (*allDesignOptionCombinations, combinationGuid);
+        if (combinationPtr == nullptr) {
+            return CreateFailedExecutionResult (APIERR_BADID, "The project has no design option combination with this designOptionCombinationId. List them with GetDesignOptionCombinations.");
+        }
+    }
+
+    API_NavigatorItem item = {};
+    GS::UniString failure;
+    GSErrCode err = GetProjectMapItemOfWindow (item, failure);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, failure);
+    }
+
+    // The setters must be called from a command scope.
+    const auto setCombination = [&] (DesignOptionCombinationViewSettings& settings, GS::UniString& errorText) -> GSErrCode {
+        GSErrCode resultCode = NoError;
+        ACAPI_CallUndoableCommand ("Set Design Option Combination of Window", [&] () -> GSErrCode {
+            auto result = (combinationPtr == nullptr) ? settings.SetMainModelOnly () : settings.SetStandardCombination (*combinationPtr);
+            if (result.IsErr ()) {
+                resultCode = result.UnwrapErr ().kind != NoError ? result.UnwrapErr ().kind : APIERR_GENERAL;
+                errorText = result.UnwrapErr ().text.c_str ();
+            }
+            return NoError;
+        });
+        return resultCode;
+    };
+
+    // A temporary view with the window's current settings gets the combination and is opened,
+    // which applies its settings to the window, then deleted.
+    TemporaryWindowView temporaryView;
+    err = temporaryView.Create (item.guid, failure);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, failure);
+    }
+    auto view = ACAPI::ModelViews::FindViewByGuid (temporaryView.viewGuid);
+    if (view.IsErr ()) {
+        return CreateFailedExecutionResult (view.UnwrapErr ().kind, "Unable to read the temporary view of the window.");
+    }
+    auto settings = manager->GetDesignOptionCombinationSettingsOf (*view);
+    if (settings.IsErr ()) {
+        return CreateFailedExecutionResult (settings.UnwrapErr ().kind, "Unable to read the design option combination of the temporary view.");
+    }
+    GS::UniString errorText;
+    err = setCombination (*settings, errorText);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to set the design option combination of the temporary view: " + errorText);
+    }
+    err = ACAPI_View_GoToView (APIGuidToString (temporaryView.viewGuid).ToCStr ().Get ());
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to apply the design option combination to the window.");
+    }
+    return CreateSuccessfulExecutionResult ();
+#else
+    UNUSED_PARAMETER (parameters);
+    return CreateFailedExecutionResult (APIERR_NOTSUPPORTED, "This command requires Archicad 29 or newer.");
 #endif
 }
 

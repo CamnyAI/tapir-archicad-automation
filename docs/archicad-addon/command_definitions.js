@@ -4855,6 +4855,74 @@ var gCommands = [{
         ]
     }
             },{
+                "name": "GetElementDefaults",
+                "version": "1.7.4",
+                "description": "Gets the tool defaults of the given element types: the settings a new element of the type starts from (the Info Box with nothing selected), in the shape GetDetailsOfElements returns the details of an element. Fields that only a placed element has (polygons, holes, reference lines, morph bodies, text content, id) are left out. Supported for walls, columns, beams, slabs, roofs, shells, zones, doors, windows, skylights, objects, lamps, meshes, morphs, stairs, railings, curtain walls and the 2D drafting types.",
+                "inputScheme": {
+        "type": "object",
+        "properties": {
+            "elementTypes": {
+                "type": "array",
+                "description": "The element types whose tool defaults to read.",
+                "items": {
+                    "$ref": "#/ElementType"
+                },
+                "minItems": 1
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "elementTypes"
+        ]
+    },
+                "outputScheme": {
+        "type": "object",
+        "properties": {
+            "defaults": {
+                "type": "array",
+                "description": "One entry per input element type, in the same order. A type whose defaults cannot be read gets an error entry in its place.",
+                "items": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "description": "The settings a new element of the type starts from, in the shape GetDetailsOfElements returns them. Fields read from a placed element's memo (polygons, holes, profiles, text content) are absent.",
+                            "properties": {
+                                "type": {
+                                    "$ref": "#/ElementType"
+                                },
+                                "floorIndex": {
+                                    "type": "number"
+                                },
+                                "layerIndex": {
+                                    "type": "number"
+                                },
+                                "drawIndex": {
+                                    "type": "number"
+                                },
+                                "details": {
+                                    "$ref": "#/TypeSpecificDetails"
+                                }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                                "type",
+                                "layerIndex",
+                                "details"
+                            ]
+                        },
+                        {
+                            "$ref": "#/ErrorItem"
+                        }
+                    ]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "defaults"
+        ]
+    }
+            },{
                 "name": "SetDetailsOfElements",
                 "version": "1.0.7",
                 "description": "Sets the details of the given elements (floor, layer, order, Element ID etc).",
@@ -8803,6 +8871,52 @@ var gCommands = [{
         ]
     }
             },{
+                "name": "StretchElements",
+                "version": "1.7.4",
+                "description": "Stretches elements like the Stretch command of Archicad with a marquee: the nodes of each element inside the given floor plan polygon move by the given vector, the other nodes stay; an element entirely inside the polygon is moved. Walls, beams and lines are stretched by Archicad (ACAPI_Element_Edit); the vertices of slabs, manual zones, fills, polylines, meshes and roofs, which that leaves in place, are moved in their polygon. The elements keep their GUIDs. An element with no node inside the polygon, or one that cannot be edited or stretched, gets a failed execution result.",
+                "inputScheme": {
+        "type": "object",
+        "properties": {
+            "elements": {
+                "$ref": "#/Elements",
+                "description": "The elements to stretch."
+            },
+            "polygon": {
+                "type": "array",
+                "description": "The stretch area on the floor plan, like the marquee of the Stretch command: the nodes of the elements inside it (or on its boundary) move. A last vertex equal to the first is ignored.",
+                "items": {
+                    "$ref": "#/Coordinate2D"
+                },
+                "minItems": 3
+            },
+            "vector": {
+                "type": "object",
+                "description": "The displacement of the nodes inside the polygon. z (default 0) is the vertical part of the edit vector, passed on to Archicad; the vertices of polygon elements move only horizontally.",
+                "properties": {
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "z": { "type": "number" }
+                },
+                "additionalProperties": false,
+                "required": ["x", "y"]
+            }
+        },
+        "additionalProperties": false,
+        "required": ["elements", "polygon", "vector"]
+    },
+                "outputScheme": {
+        "type": "object",
+        "properties": {
+            "executionResults": {
+                "$ref": "#/ExecutionResults"
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "executionResults"
+        ]
+    }
+            },{
                 "name": "DeleteElements",
                 "version": "1.2.1",
                 "description": "Deletes elements. The zones of the call are deleted before all the other elements, so an automatic zone deleted together with its bounding walls is gone before its boundary is; deleting the boundary of an automatic zone without the zone itself can open Archicad's modal 'No closed polygon found' dialog, which blocks the command until someone clicks it in Archicad. Returns an execution result for each input element: an element that could not be deleted (for example because its layer is locked) or a guid that is not in the project gets a failed execution result instead of being skipped silently, and does not stop the other elements from being deleted.",
@@ -9944,11 +10058,15 @@ var gCommands = [{
                         "oSide": { "type": "boolean" },
                         "libraryPartName": {
                             "type": "string",
-                            "description": "Optional. Localized library part name (docu_UName) to place instead of the tool default/favorite, e.g. a shutter part that has no favorite. It has to be a window library part. Applied to the tool defaults before cloning."
+                            "description": "Optional. Localized library part name (docu_UName) to place instead of the tool default/favorite, e.g. a shutter part that has no favorite. It has to be a window library part. Applied to the tool defaults for the create and taken back off them afterwards."
+                        },
+                        "id": {
+                            "type": "string",
+                            "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
                         },
                         "favoriteName": {
                             "type": "string",
-                            "description": "Optional. Name of an existing Window favorite (as returned by `GetFavoritesByType`). Applied to the Window tool defaults before the create."
+                            "description": "Optional. Name of an existing Window favorite (as returned by `GetFavoritesByType`). Applied to the Window tool defaults for the create and taken back off them afterwards."
                         }
                     },
                     "additionalProperties": false,
@@ -9991,11 +10109,15 @@ var gCommands = [{
                         "oSide": { "type": "boolean" },
                         "libraryPartName": {
                             "type": "string",
-                            "description": "Optional. Localized library part name (docu_UName) to place instead of the tool default/favorite, e.g. a shutter part that has no favorite. It has to be a door library part. Applied to the tool defaults before cloning."
+                            "description": "Optional. Localized library part name (docu_UName) to place instead of the tool default/favorite, e.g. a shutter part that has no favorite. It has to be a door library part. Applied to the tool defaults for the create and taken back off them afterwards."
+                        },
+                        "id": {
+                            "type": "string",
+                            "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
                         },
                         "favoriteName": {
                             "type": "string",
-                            "description": "Optional. Name of an existing Door favorite (as returned by `GetFavoritesByType`). Applied to the Door tool defaults before the create."
+                            "description": "Optional. Name of an existing Door favorite (as returned by `GetFavoritesByType`). Applied to the Door tool defaults for the create and taken back off them afterwards."
                         }
                     },
                     "additionalProperties": false,
@@ -11504,6 +11626,11 @@ var gCommands = [{
                         "type": "string",
                         "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
                     },
+                    "layerIndex": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional layer attribute index to place the new element on. It must be an existing, unlocked layer. When omitted the element gets the layer of the favorite or of the tool defaults."
+                    },
                     "floorIndex": {
                         "type": "number",
                         "description" : "Optional story index of the new zone. An automatic zone (geometry.referencePosition) is found around its reference point on this story, which is made active in the floor plan while the zone is created; the previously active story is restored afterwards."
@@ -12221,6 +12348,11 @@ var gCommands = [{
                         "id": {
                             "type": "string",
                             "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
+                        },
+                        "layerIndex": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Optional layer attribute index to place the new element on. It must be an existing, unlocked layer. When omitted the element gets the layer of the favorite or of the tool defaults."
                         }
                     },
                     "additionalProperties": false,
@@ -12310,6 +12442,11 @@ var gCommands = [{
                         "id": {
                             "type": "string",
                             "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
+                        },
+                        "layerIndex": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Optional layer attribute index to place the new element on. It must be an existing, unlocked layer. When omitted the element gets the layer of the favorite or of the tool defaults."
                         }
                     },
                     "additionalProperties": false,
@@ -14410,7 +14547,7 @@ var gCommands = [{
             },{
                 "name": "ModifyRoofs",
                 "version": "1.4.0",
-                "description": "Modifies multi-plane Roof elements based on the given parameters.",
+                "description": "Modifies Roof elements based on the given parameters: the structure, thickness, level and polygon of both kinds, the levels and eaves overhang of a multi-plane roof, and the pivot line and slope angle of a single-plane roof.",
                 "inputScheme": {
         "type": "object",
         "properties": {
@@ -14426,14 +14563,24 @@ var gCommands = [{
                             "exclusiveMinimum": 0.0,
                             "description": "Only takes effect on a Basic (homogeneous) roof - a Composite roof takes its thickness from the composite attribute. Send structureType 'Basic' in the same call to switch a composite roof first."
                         },
-                        "eavesOverhang": { "type": "number" },
+                        "eavesOverhang": { "type": "number", "description": "Multi-plane roofs only." },
                         "levels": {
                             "type": "array",
                             "minItems": 1,
                             "maxItems": 16,
                             "items": {
                                 "$ref": "#/RoofLevel"
-                            }
+                            },
+                            "description": "Multi-plane roofs only."
+                        },
+                        "pivotLine": {
+                            "$ref": "#/RoofPivotLine",
+                            "description": "Single-plane roofs only: the new pivot line, the line the roof plane tilts around at the roof's level. The side the roof rises on is kept. A multi-plane roof given it fails."
+                        },
+                        "angle": {
+                            "type": "number",
+                            "exclusiveMinimum": 0.0,
+                            "description": "Single-plane roofs only: the new slope angle in radians. A multi-plane roof given it fails."
                         },
                         "structureType": {
                             "$ref": "#/RoofStructureType"
@@ -14443,7 +14590,8 @@ var gCommands = [{
                         "polygonOutline": {
                             "type": "array",
                             "items": { "$ref": "#/Coordinate2D" },
-                            "minItems": 3
+                            "minItems": 3,
+                            "description": "The new pivot polygon of a multi-plane roof, or the new outline of a single-plane roof, in the shape GetDetailsOfElements returns it. On a single-plane roof it replaces the holes too (resend them to keep them); the edge trims, side materials and edge types of its edges are kept when the contours and vertex counts stay the same, and reset otherwise."
                         },
                         "polygonArcs": {
                             "type": "array",
@@ -14458,6 +14606,84 @@ var gCommands = [{
         },
         "additionalProperties": false,
         "required": ["roofsWithDetails"]
+    },
+                "outputScheme": {"type":"object","properties":{"executionResults":{"$ref":"#/ExecutionResults"}},"additionalProperties":false,"required":["executionResults"]}
+            },{
+                "name": "ModifyShells",
+                "version": "1.7.4",
+                "description": "Modifies Shell elements in place: the structure (Basic or Composite), the building material or composite and the thickness of a Basic shell. The elements keep their GUIDs.",
+                "inputScheme": {
+        "type": "object",
+        "properties": {
+            "shellsWithDetails": {
+                "type": "array",
+                "description": "Array of Shell elements to modify, with the fields to change, as GetDetailsOfElements returns them. Only the given fields are changed.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "elementId": { "$ref": "#/ElementId" },
+                        "thickness": {
+                            "type": "number",
+                            "exclusiveMinimum": 0.0,
+                            "description": "Only takes effect on a Basic shell: a Composite shell takes its thickness from the composite. Send structureType 'Basic' in the same call to switch a composite shell first."
+                        },
+                        "structureType": {
+                            "$ref": "#/ShellStructureType"
+                        },
+                        "buildingMaterialId": {
+                            "$ref": "#/AttributeId",
+                            "description": "The building material of a Basic shell. Given alone, it makes the shell Basic."
+                        },
+                        "compositeId": {
+                            "$ref": "#/AttributeId",
+                            "description": "The composite of a Composite shell. Given alone, it makes the shell Composite."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["elementId"]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["shellsWithDetails"]
+    },
+                "outputScheme": {"type":"object","properties":{"executionResults":{"$ref":"#/ExecutionResults"}},"additionalProperties":false,"required":["executionResults"]}
+            },{
+                "name": "ModifySkylights",
+                "version": "1.7.4",
+                "description": "Modifies Skylight elements in place: the floor plan position of the anchor point on the owner roof or shell, and the width and height (the A and B of the library part). The elements keep their GUIDs.",
+                "inputScheme": {
+        "type": "object",
+        "properties": {
+            "skylightsWithDetails": {
+                "type": "array",
+                "description": "Array of Skylight elements to modify, with the fields to change, as GetDetailsOfElements returns them. Only the given fields are changed; the skylight stays in its owner roof or shell.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "elementId": { "$ref": "#/ElementId" },
+                        "anchorPosition": {
+                            "$ref": "#/Coordinate2D",
+                            "description": "The new floor plan position of the anchor point. It must be on the owner element; Archicad puts the skylight onto the owner's surface there."
+                        },
+                        "width": {
+                            "type": "number",
+                            "exclusiveMinimum": 0.0,
+                            "description": "The new width: the A of the library part."
+                        },
+                        "height": {
+                            "type": "number",
+                            "exclusiveMinimum": 0.0,
+                            "description": "The new height: the B of the library part."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["elementId"]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": ["skylightsWithDetails"]
     },
                 "outputScheme": {"type":"object","properties":{"executionResults":{"$ref":"#/ExecutionResults"}},"additionalProperties":false,"required":["executionResults"]}
             },{
@@ -15526,13 +15752,13 @@ var gCommands = [{
             },{
                 "name": "ModifyZones",
                 "version": "1.7.4",
-                "description": "Modifies Zone elements: name, number, category, zone stamp, height, base offset, top link and floor thickness. Only the given fields are changed; the polygon is kept.",
+                "description": "Modifies Zone elements: name, number, category, zone stamp, height, base offset, top link and floor thickness, and the polygon (outline, arcs and holes) of a manual zone. Only the given fields are changed.",
                 "inputScheme": {
         "type": "object",
         "properties": {
             "zonesWithDetails": {
                 "type": "array",
-                "description": "Array of Zone elements to modify, with the fields to change. Only the given fields are changed; the polygon and the omitted fields are kept. The same fields as the ZoneSettings of SetDetailsOfElements.",
+                "description": "Array of Zone elements to modify, with the fields to change. Only the given fields are changed; the omitted fields are kept. The same fields as the ZoneSettings of SetDetailsOfElements, plus the polygon of a manual zone.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -15547,7 +15773,22 @@ var gCommands = [{
                         "bottomOffset": { "type": "number", "description": "Base level of the zone relative to its home story level." },
                         "topOffset": { "type": "number", "description": "Offset of the top of the zone from the linked top story level. Only has an effect when relativeTopStory is non-zero." },
                         "relativeTopStory": { "type": "number", "description": "Non-zero links the top of the zone to another story, relative to its home story (1 is the story above), instead of an explicit height. Do not set together with height in the same call, see the note on height." },
-                        "floorThickness": { "type": "number", "minimum": 0.0, "description": "Thickness of the floor finish (subfloor thickness) of the zone." }
+                        "floorThickness": { "type": "number", "minimum": 0.0, "description": "Thickness of the floor finish (subfloor thickness) of the zone." },
+                        "polygonOutline": {
+                            "type": "array",
+                            "items": { "$ref": "#/Coordinate2D" },
+                            "minItems": 3,
+                            "description": "The new boundary of a manual zone, in the shape GetDetailsOfElements returns it. It replaces the whole polygon, holes included: resend the holes to keep them. An automatic zone follows its boundary elements, so a polygon fails the item."
+                        },
+                        "polygonArcs": {
+                            "type": "array",
+                            "items": { "$ref": "#/PolyArc" },
+                            "description": "The arcs of polygonOutline."
+                        },
+                        "holes": {
+                            "$ref": "#/Holes2D",
+                            "description": "The holes of a manual zone. Can be given without polygonOutline to replace only the holes (an empty array removes them all); the current outline is kept."
+                        }
                     },
                     "additionalProperties": false,
                     "required": ["elementId"]
@@ -22936,13 +23177,18 @@ var gCommands = [{
             },{
                 "name": "GetAvailableLibraryParts",
                 "version": "1.5.0",
-                "description": "Lists library parts currently available to the project. Filter by typeId (e.g. 'Door', 'Window', 'Object', 'Lamp').",
+                "description": "Lists library parts currently available to the project. Filter by typeId, or with subtypeOf by the subtype they descend from (Door, Window, Object, Lamp, Skylight): Archicad's own libraries list doors, windows and lamps with the Object type id.",
                 "inputScheme": {
         "type": "object",
         "properties": {
             "filterByTypeId": {
                 "$ref": "#/LibraryPartType",
                 "description": "Optional. Filter by libpart type (matches the value returned by LibPartTypeIdToString)."
+            },
+            "subtypeOf": {
+                "type": "string",
+                "enum": ["Door", "Window", "Object", "Lamp", "Skylight"],
+                "description": "Optional. Only the library parts that descend from this Archicad subtype: Door (Wall), Window (Wall), Light (Lamp), Skylight, or for Object any Model Element that is not an opening or a light. Archicad's own libraries list doors, windows and lamps with the Object type id, so filterByTypeId does not find them; this does."
             }
         },
         "additionalProperties": false
@@ -22956,6 +23202,10 @@ var gCommands = [{
                     "type": "object",
                     "properties": {
                         "guid": { "type": "string" },
+                        "parentGuid": {
+                            "type": "string",
+                            "description": "The main GUID of the library part it is a subtype of (its parent subtype). Missing for a part without one."
+                        },
                         "index": { "type": "integer" },
                         "documentName": { "type": "string" },
                         "fileName": { "type": "string" },
@@ -25292,6 +25542,91 @@ var gCommands = [{
                     "name"
                 ]
             }
+        ]
+    },
+                "outputScheme": {
+        "$ref": "#/ExecutionResult"
+    }
+            },{
+                "name": "GetRenovationFilters",
+                "version": "1.7.4",
+                "description": "Gets the renovation filters of the project (Document > Renovation > Renovation Filter). A renovationFilterId has the same shape as the renovationFilterGuid of GetViewSettings and SetViewSettings, so a filter listed here can be set on saved views too.",
+                "inputScheme": null,
+                "outputScheme": {
+    "type": "object",
+    "properties": {
+        "renovationFilters": {
+            "type": "array",
+            "description": "Every renovation filter of the project, in the order of the project.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "renovationFilterId": {
+                        "$ref": "#/GuidId",
+                        "description": "Identifier of the renovation filter. The same identifier is the renovationFilterGuid of GetViewSettings and SetViewSettings."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the renovation filter."
+                    }
+                },
+                "additionalProperties": false,
+                "required": [
+                    "renovationFilterId",
+                    "name"
+                ]
+            }
+        }
+    },
+    "additionalProperties": false,
+    "required": [
+        "renovationFilters"
+    ]
+}
+            },{
+                "name": "GetActiveRenovationFilter",
+                "version": "1.7.4",
+                "description": "Gets the renovation filter of the current window (Document > Renovation > Renovation Filter): its renovationFilterId and name.",
+                "inputScheme": null,
+                "outputScheme": {
+    "type": "object",
+    "properties": {
+        "renovationFilterId": {
+            "$ref": "#/GuidId",
+            "description": "Identifier of the renovation filter of the current window, as listed by GetRenovationFilters."
+        },
+        "name": {
+            "type": "string",
+            "description": "Name of the renovation filter."
+        }
+    },
+    "additionalProperties": false,
+    "required": [
+        "renovationFilterId",
+        "name"
+    ]
+}
+            },{
+                "name": "SetActiveRenovationFilter",
+                "version": "1.7.4",
+                "description": "Sets the renovation filter of the current window (Document > Renovation > Renovation Filter), given by its renovationFilterId from GetRenovationFilters or by its name. Saved views keep their own filter: change that with SetViewSettings.",
+                "inputScheme": {
+        "type": "object",
+        "properties": {
+            "renovationFilterId": {
+                "$ref": "#/GuidId",
+                "description": "Identifier of the renovation filter, as listed by GetRenovationFilters. Takes precedence over name when both are given."
+            },
+            "name": {
+                "type": "string",
+                "description": "Name of the renovation filter. An exact match wins over a case-insensitive one.",
+                "minLength": 1
+            }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+            { "required": ["renovationFilterId"] },
+            { "required": ["name"] }
         ]
     },
                 "outputScheme": {
@@ -28694,6 +29029,58 @@ var gCommands = [{
         "required": [
             "executionResults"
         ]
+    }
+            },{
+                "name": "GetDesignOptionCombinationOfWindow",
+                "version": "1.7.4",
+                "description": "Gets the design option combination the floor plan window shows: its designOptionCombinationId and name, or a null designOptionCombinationId when the window shows only the main model or a custom set of design options (see status). Available from Archicad 29.",
+                "inputScheme": null,
+                "outputScheme": {
+        "type": "object",
+        "properties": {
+            "designOptionCombinationId": {
+                "$ref": "#/DesignOptionCombinationId",
+                "description": "The design option combination the window shows. Absent (null) when the window shows only the main model, a custom set of design options or a deleted combination."
+            },
+            "name": {
+                "type": "string",
+                "description": "The name of the combination, or the name Archicad gives the window's setting when there is no combination."
+            },
+            "status": {
+                "type": "string",
+                "enum": ["Standard", "MainModelOnly", "Custom", "Missing"],
+                "description": "Standard: the window shows designOptionCombinationId. MainModelOnly: only the main model, no design option. Custom: a set of design options without a name. Missing: the combination of the window was deleted."
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "status"
+        ]
+    }
+            },{
+                "name": "SetDesignOptionCombinationOfWindow",
+                "version": "1.7.4",
+                "description": "Sets the design option combination the floor plan window shows, or makes it show only the main model. Available from Archicad 29.",
+                "inputScheme": {
+        "type": "object",
+        "properties": {
+            "designOptionCombinationId": {
+                "$ref": "#/DesignOptionCombinationId",
+                "description": "The design option combination the window should show, as GetDesignOptionCombinations lists it."
+            },
+            "mainModelOnly": {
+                "type": "boolean",
+                "description": "true makes the window show only the main model, without any design option (what GetDesignOptionCombinationOfWindow reports as status MainModelOnly)."
+            }
+        },
+        "additionalProperties": false,
+        "oneOf": [
+            { "required": ["designOptionCombinationId"] },
+            { "required": ["mainModelOnly"] }
+        ]
+    },
+                "outputScheme": {
+        "$ref": "#/ExecutionResult"
     }
             },{
                 "name": "SetDefaultDesignOption",

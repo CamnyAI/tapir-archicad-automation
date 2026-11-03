@@ -25,6 +25,16 @@ GS::Optional<GS::UniString> ApplySlabStructure (
     const GS::ObjectState& details,
     bool& changed);
 
+// Shared by ModifyRoofsCommand and StretchElementsCommand (ElementCommands.cpp): writes a new
+// polygon (outline, arcs, holes, as GetDetailsOfElements reports them) to a single-plane roof.
+// Returns a failed execution result when Archicad refuses it; via tells how it was written.
+GS::Optional<GS::ObjectState> WritePlaneRoofPolygon (
+    const API_Element& element,
+    const GS::Array<GS::ObjectState>& polygonOutline,
+    const GS::Array<GS::ObjectState>& polygonArcs,
+    const GS::Array<GS::ObjectState>& holes,
+    GS::UniString& via);
+
 class CreateWallsCommand : public CreateElementsCommandBase
 {
 public:
@@ -233,6 +243,26 @@ class ModifyRoofsCommand : public CommandBase
 {
 public:
     ModifyRoofsCommand ();
+    virtual GS::String GetName () const override;
+    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
+    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+};
+
+class ModifyShellsCommand : public CommandBase
+{
+public:
+    ModifyShellsCommand ();
+    virtual GS::String GetName () const override;
+    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
+    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+};
+
+class ModifySkylightsCommand : public CommandBase
+{
+public:
+    ModifySkylightsCommand ();
     virtual GS::String GetName () const override;
     virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
     virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;

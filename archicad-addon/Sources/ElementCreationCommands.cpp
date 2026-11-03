@@ -973,6 +973,11 @@ GS::Optional<GS::UniString> CreateZonesCommand::GetInputParametersSchema () cons
                         "type": "string",
                         "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
                     },
+                    "layerIndex": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional layer attribute index to place the new element on. It must be an existing, unlocked layer. When omitted the element gets the layer of the favorite or of the tool defaults."
+                    },
                     "floorIndex": {
                         "type": "number",
                         "description" : "Optional story index of the new zone. An automatic zone (geometry.referencePosition) is found around its reference point on this story, which is made active in the floor plan while the zone is created; the previously active story is restored afterwards."
@@ -1054,6 +1059,11 @@ GS::Optional<GS::UniString> CreateZonesCommand::GetInputParametersSchema () cons
 GS::Optional<GS::ObjectState> CreateZonesCommand::SetTypeSpecificParameters (API_Element& element, API_ElementMemo& memo, const Stories& /*stories*/, const GS::ObjectState& parameters) const
 {
     parameters.Get ("floorIndex", element.header.floorInd);
+
+    auto layerErr = ApplyLayerIndexFromParameters (parameters, element);
+    if (layerErr.HasValue ()) {
+        return layerErr;
+    }
 
     const API_Guid categoryAttrGuid = GetGuidFromArrayItem ("categoryAttributeId", parameters);
     if (categoryAttrGuid != APINULLGuid) {
@@ -1184,7 +1194,7 @@ GS::Optional<GS::UniString> ModifyZonesCommand::GetInputParametersSchema () cons
         "properties": {
             "zonesWithDetails": {
                 "type": "array",
-                "description": "Array of Zone elements to modify, with the fields to change. Only the given fields are changed; the polygon and the omitted fields are kept. The same fields as the ZoneSettings of SetDetailsOfElements.",
+                "description": "Array of Zone elements to modify, with the fields to change. Only the given fields are changed; the omitted fields are kept. The same fields as the ZoneSettings of SetDetailsOfElements, plus the polygon of a manual zone.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -1199,7 +1209,22 @@ GS::Optional<GS::UniString> ModifyZonesCommand::GetInputParametersSchema () cons
                         "bottomOffset": { "type": "number", "description": "Base level of the zone relative to its home story level." },
                         "topOffset": { "type": "number", "description": "Offset of the top of the zone from the linked top story level. Only has an effect when relativeTopStory is non-zero." },
                         "relativeTopStory": { "type": "number", "description": "Non-zero links the top of the zone to another story, relative to its home story (1 is the story above), instead of an explicit height. Do not set together with height in the same call, see the note on height." },
-                        "floorThickness": { "type": "number", "minimum": 0.0, "description": "Thickness of the floor finish (subfloor thickness) of the zone." }
+                        "floorThickness": { "type": "number", "minimum": 0.0, "description": "Thickness of the floor finish (subfloor thickness) of the zone." },
+                        "polygonOutline": {
+                            "type": "array",
+                            "items": { "$ref": "#/Coordinate2D" },
+                            "minItems": 3,
+                            "description": "The new boundary of a manual zone, in the shape GetDetailsOfElements returns it. It replaces the whole polygon, holes included: resend the holes to keep them. An automatic zone follows its boundary elements, so a polygon fails the item."
+                        },
+                        "polygonArcs": {
+                            "type": "array",
+                            "items": { "$ref": "#/PolyArc" },
+                            "description": "The arcs of polygonOutline."
+                        },
+                        "holes": {
+                            "$ref": "#/Holes2D",
+                            "description": "The holes of a manual zone. Can be given without polygonOutline to replace only the holes (an empty array removes them all); the current outline is kept."
+                        }
                     },
                     "additionalProperties": false,
                     "required": ["elementId"]
@@ -1209,6 +1234,160 @@ GS::Optional<GS::UniString> ModifyZonesCommand::GetInputParametersSchema () cons
         "additionalProperties": false,
         "required": ["zonesWithDetails"]
     })";
+}
+
+// The polygon memo of a zone built from scratch, as CreateZones builds it; the polygon counts of
+// zone.poly are set to match.
+static void BuildZonePolygonMemo (API_ZoneType& zone, API_ElementMemo& memo, GS::Array<GS::ObjectState> polygonOutline, const GS::Array<GS::ObjectState>& polygonArcs, const GS::Array<GS::ObjectState>& holes)
+{
+    if (polygonOutline.GetSize () > 1 && IsSame2DCoordinate (polygonOutline.GetFirst (), polygonOutline.GetLast ())) {
+        polygonOutline.Pop ();
+    }
+    zone.poly.nCoords   = polygonOutline.GetSize () + 1;
+    zone.poly.nSubPolys = 1;
+    zone.poly.nArcs     = polygonArcs.GetSize ();
+    for (const GS::ObjectState& hole : holes) {
+        GS::Array<GS::ObjectState> holeOutline;
+        GS::Array<GS::ObjectState> holeArcs;
+        if (GetHoleGeometry (hole, holeOutline, holeArcs)) {
+            zone.poly.nCoords += holeOutline.GetSize () + 1;
+            ++zone.poly.nSubPolys;
+            zone.poly.nArcs += holeArcs.GetSize ();
+        }
+    }
+    memo.coords = reinterpret_cast<API_Coord**> (BMAllocateHandle ((zone.poly.nCoords + 1) * sizeof (API_Coord), ALLOCATE_CLEAR, 0));
+    memo.pends = reinterpret_cast<Int32**> (BMAllocateHandle ((zone.poly.nSubPolys + 1) * sizeof (Int32), ALLOCATE_CLEAR, 0));
+    memo.parcs = reinterpret_cast<API_PolyArc**> (BMAllocateHandle (zone.poly.nArcs * sizeof (API_PolyArc), ALLOCATE_CLEAR, 0));
+    Int32 iCoord = 1;
+    Int32 iArc = 0;
+    Int32 iPends = 1;
+    AddPolyToMemo (polygonOutline, polygonArcs, iCoord, iArc, iPends, memo);
+    for (const GS::ObjectState& hole : holes) {
+        GS::Array<GS::ObjectState> holeOutline;
+        GS::Array<GS::ObjectState> holeArcs;
+        if (GetHoleGeometry (hole, holeOutline, holeArcs)) {
+            AddPolyToMemo (holeOutline, holeArcs, iCoord, iArc, iPends, memo);
+        }
+    }
+}
+
+static void SetZonePolygonMask (API_Element& mask)
+{
+    ACAPI_ELEMENT_MASK_SET (mask, API_ZoneType, poly);
+    ACAPI_ELEMENT_MASK_SET (mask, API_ZoneType, poly.nCoords);
+    ACAPI_ELEMENT_MASK_SET (mask, API_ZoneType, poly.nSubPolys);
+    ACAPI_ELEMENT_MASK_SET (mask, API_ZoneType, poly.nArcs);
+}
+
+// The polygon fields of a ModifyZones item, written with WriteManualZonePolygon.
+static GS::Optional<GS::ObjectState> ChangeZonePolygon (const API_Element& element, const GS::ObjectState& item, GS::UniString& via)
+{
+    GS::Array<GS::ObjectState> polygonOutline;
+    const bool hasNewOutline = item.Get ("polygonOutline", polygonOutline);
+    GS::Array<GS::ObjectState> holes;
+    const bool hasHolesField = item.Get ("holes", holes);
+    if (!hasNewOutline && !hasHolesField) {
+        if (item.Contains ("polygonArcs")) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, "'polygonArcs' needs 'polygonOutline'.");
+        }
+        return {};
+    }
+    if (!element.zone.manual) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "The zone is automatic: its polygon follows its boundary elements, so it cannot be given a polygon. Only a manual zone takes polygonOutline and holes.");
+    }
+
+    GS::Array<GS::ObjectState> polygonArcs;
+    if (hasNewOutline) {
+        if (polygonOutline.GetSize () < 3) {
+            return CreateFailedExecutionResult (APIERR_BADPARS, "'polygonOutline' must contain at least 3 coordinates.");
+        }
+        item.Get ("polygonArcs", polygonArcs);
+    } else {
+        GS::ObjectState currentGeometry;
+        AddPolygonWithHolesFromMemoCoords (element.header.guid, currentGeometry, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
+        currentGeometry.Get ("polygonOutline", polygonOutline);
+        currentGeometry.Get ("polygonArcs", polygonArcs);
+    }
+    return WriteManualZonePolygon (element, polygonOutline, polygonArcs, holes, via);
+}
+
+// Writes a new polygon (outline, arcs, holes) to a manual zone with ACAPI_Element_Change (the
+// documentation of ACAPI_Element_ChangeMemo limits it to slabs and roofs, and it refuses a zone's
+// polygon with APIERR_BADPOLY). A polygon with the same contours and vertex counts is written into
+// the memo the zone has, keeping its vertex ids (as OffsetEdges does); another shape gets a memo
+// built like the one CreateZones makes, and when Archicad refuses that, the zone's memo reshaped
+// with the polygon editing functions.
+GS::Optional<GS::ObjectState> WriteManualZonePolygon (const API_Element& element, const GS::Array<GS::ObjectState>& polygonOutline, const GS::Array<GS::ObjectState>& polygonArcs, const GS::Array<GS::ObjectState>& holes, GS::UniString& via)
+{
+    if (!element.zone.manual) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "The zone is automatic: its polygon follows its boundary elements, so it cannot be given a polygon.");
+    }
+    const GS::Optional<GS::UniString> holesError = ValidateHoles (holes);
+    if (holesError.HasValue ()) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, holesError.Get ());
+    }
+
+    GSErrCode inPlaceErr = NoError;
+    {
+        API_ElementMemo memo = {};
+        const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+        GSErrCode err = ACAPI_Element_GetMemo (element.header.guid, &memo, APIMemoMask_Polygon);
+        if (err != NoError) {
+            return CreateFailedExecutionResult (err, "Failed to read the polygon of the zone.");
+        }
+        if (OverwritePolygonInPlace (memo, polygonOutline, polygonArcs, holes)) {
+            API_Element changed = element;
+            API_Element mask = {};
+            ACAPI_ELEMENT_MASK_CLEAR (mask);
+            inPlaceErr = ACAPI_Element_Change (&changed, &mask, &memo, APIMemoMask_Polygon, true);
+            if (inPlaceErr == NoError) {
+                via = "inPlace";
+                return {};
+            }
+        }
+    }
+
+    GSErrCode rebuiltErr = NoError;
+    {
+        API_Element changed = element;
+        API_ElementMemo memo = {};
+        const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+        BuildZonePolygonMemo (changed.zone, memo, polygonOutline, polygonArcs, holes);
+        API_Element mask = {};
+        ACAPI_ELEMENT_MASK_CLEAR (mask);
+        SetZonePolygonMask (mask);
+        rebuiltErr = ACAPI_Element_Change (&changed, &mask, &memo, APIMemoMask_Polygon, true);
+        if (rebuiltErr == NoError) {
+            via = "rebuilt";
+            return {};
+        }
+    }
+
+    GSErrCode reshapedErr = NoError;
+    {
+        API_ElementMemo memo = {};
+        const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+        reshapedErr = ACAPI_Element_GetMemo (element.header.guid, &memo, APIMemoMask_Polygon);
+        const API_OverriddenAttribute noSideMaterial = {};
+        GS::Array<GS::ObjectState> outline = polygonOutline;
+        if (reshapedErr == NoError && !ApplySlabPolygonChange (memo, noSideMaterial, outline, polygonArcs, holes).HasValue ()) {
+            API_Element changed = element;
+            changed.zone.poly.nCoords   = (Int32) (BMGetHandleSize ((GSHandle) memo.coords) / sizeof (API_Coord)) - 1;
+            changed.zone.poly.nSubPolys = (Int32) (BMGetHandleSize ((GSHandle) memo.pends) / sizeof (Int32)) - 1;
+            changed.zone.poly.nArcs     = memo.parcs != nullptr ? (Int32) (BMGetHandleSize ((GSHandle) memo.parcs) / sizeof (API_PolyArc)) : 0;
+            API_Element mask = {};
+            ACAPI_ELEMENT_MASK_CLEAR (mask);
+            SetZonePolygonMask (mask);
+            reshapedErr = ACAPI_Element_Change (&changed, &mask, &memo, APIMemoMask_Polygon, true);
+            if (reshapedErr == NoError) {
+                via = "reshaped";
+                return {};
+            }
+        }
+    }
+
+    return CreateFailedExecutionResult (rebuiltErr != NoError ? rebuiltErr : reshapedErr,
+        GS::UniString::Printf ("Archicad refused the new polygon of the zone (in place: %d, rebuilt: %d, reshaped: %d).", (int) inPlaceErr, (int) rebuiltErr, (int) reshapedErr));
 }
 
 GS::Optional<GS::UniString> ModifyZonesCommand::GetRawResponseSchema () const
@@ -1259,7 +1438,15 @@ GS::ObjectState ModifyZonesCommand::Execute (const GS::ObjectState& parameters, 
                 continue;
             }
 
-            // No memo is passed, so the polygon is kept as it is.
+            // The polygon first: a refused polygon leaves the zone as it was.
+            GS::UniString via;
+            const GS::Optional<GS::ObjectState> polygonResult = ChangeZonePolygon (element, item, via);
+            if (polygonResult.HasValue ()) {
+                executionResults (*polygonResult);
+                continue;
+            }
+
+            // No memo is passed, so the polygon is kept as it is (or as ChangeZonePolygon wrote it).
             err = ACAPI_Element_Change (&element, &mask, nullptr, 0, true);
             if (err != NoError) {
                 executionResults (CreateFailedExecutionResult (err, "Failed to modify the zone."));
@@ -2134,6 +2321,11 @@ static GS::UniString BuildLibraryPartBasedSchema (const char* arrayFieldName,
                         "id": {
                             "type": "string",
                             "description": "Optional Element ID of the new element (the ID field of the Settings dialog, shown in schedules and labels; the same string GetDetailsOfElements returns as id). When omitted the element gets the next automatic ID of its tool."
+                        },
+                        "layerIndex": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Optional layer attribute index to place the new element on. It must be an existing, unlocked layer. When omitted the element gets the layer of the favorite or of the tool defaults."
                         }
                     },
                     "additionalProperties": false,
@@ -2518,6 +2710,10 @@ GS::Optional<GS::ObjectState> CreateObjectsCommand::SetTypeSpecificParameters (A
     if (err.HasValue ()) {
         return err;
     }
+    err = ApplyLayerIndexFromParameters (parameters, element);
+    if (err.HasValue ()) {
+        return err;
+    }
     return ApplyObjectLampDetails (element, memo, nullptr, stories, parameters);
 }
 
@@ -2540,6 +2736,10 @@ GS::Optional<GS::UniString> CreateLampsCommand::GetInputParametersSchema () cons
 GS::Optional<GS::ObjectState> CreateLampsCommand::SetTypeSpecificParameters (API_Element& element, API_ElementMemo& memo, const Stories& stories, const GS::ObjectState& parameters) const
 {
     auto err = ResolveLibraryPartName (element, parameters);
+    if (err.HasValue ()) {
+        return err;
+    }
+    err = ApplyLayerIndexFromParameters (parameters, element);
     if (err.HasValue ()) {
         return err;
     }

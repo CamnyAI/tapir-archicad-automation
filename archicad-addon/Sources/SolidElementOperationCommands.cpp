@@ -756,9 +756,22 @@ GS::ObjectState GetElementTrimsCommand::Execute (const GS::ObjectState& paramete
         // A read that fails is reported as an error item, never as "not
         // trimmed": an unknown or deleted guid must stay distinguishable from
         // an element with no trims.
-        GS::Array<API_Guid> trimming;
-        GSErrCode err = ACAPI_Element_Trim_GetTrimmingElements (guid, &trimming);
+        API_Elem_Head header = {};
+        header.guid = guid;
+        GSErrCode err = ACAPI_Element_GetHeader (&header);
         if (err != NoError) {
+            items (CreateErrorResponse (err, "The element does not exist."));
+            continue;
+        }
+        // APIERR_BADELEMENTTYPE only says that the element is of a type the list
+        // cannot hold: an element that is not a construction element is trimmed by
+        // nothing, and one that is not a roof or a shell trims nothing. The other
+        // list of the element is still read.
+        GS::Array<API_Guid> trimming;
+        err = ACAPI_Element_Trim_GetTrimmingElements (guid, &trimming);
+        if (err == APIERR_BADELEMENTTYPE) {
+            trimming.Clear ();
+        } else if (err != NoError) {
             items (CreateErrorResponse (err, "Failed to read the trimming elements of the element."));
             continue;
         }
@@ -784,7 +797,9 @@ GS::ObjectState GetElementTrimsCommand::Execute (const GS::ObjectState& paramete
         const auto& trims = item.AddList<GS::ObjectState> ("trims");
         GS::Array<API_Guid> trimmed;
         err = ACAPI_Element_Trim_GetTrimmedElements (guid, &trimmed);
-        if (err != NoError) {
+        if (err == APIERR_BADELEMENTTYPE) {
+            trimmed.Clear ();
+        } else if (err != NoError) {
             items (CreateErrorResponse (err, "Failed to read the elements this element trims."));
             continue;
         }

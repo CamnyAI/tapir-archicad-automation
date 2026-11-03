@@ -3703,6 +3703,13 @@ var gSchemaDefinitions = {
             "Composite"
         ]
     },
+    "ShellStructureType": {
+        "type": "string",
+        "enum": [
+            "Basic",
+            "Composite"
+        ]
+    },
     "DisplayOption": {
         "type": "string",
         "description": "Floor plan display option.",
@@ -8265,6 +8272,33 @@ var gSchemaDefinitions = {
             "polygonOutline"
         ]
     },
+    "ShellDetails": {
+        "type": "object",
+        "properties": {
+            "shellClass": {
+                "type": "string",
+                "enum": [ "Extruded", "Revolved", "Ruled" ]
+            },
+            "structureType": {
+                "$ref": "#/ShellStructureType"
+            },
+            "thickness": {
+                "type": "number"
+            },
+            "buildingMaterialId": {
+                "$ref": "#/AttributeId"
+            },
+            "compositeId": {
+                "$ref": "#/AttributeId"
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "shellClass",
+            "structureType",
+            "thickness"
+        ]
+    },
     "SlabDetails": {
         "type": "object",
         "properties": {
@@ -10780,6 +10814,9 @@ var gSchemaDefinitions = {
             },
             {
                 "$ref": "#/RoofDetails"
+            },
+            {
+                "$ref": "#/ShellDetails"
             },
             {
                 "$ref": "#/ColumnDetails"

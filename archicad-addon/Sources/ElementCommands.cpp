@@ -1,6 +1,10 @@
 #include "ElementCommands.hpp"
 
+#include <cstring>
+#include <functional>
+
 #include "ElementCreationCommands.hpp"
+#include "ExtendedElementCommands.hpp"
 #include "ElementDetailsReaders.hpp"
 #include "MigrationHelper.hpp"
 #include "GSUnID.hpp"
@@ -1550,6 +1554,878 @@ static void AddRailingReferenceLineAndSegments (const API_Element& elem, GS::Obj
     }
 }
 
+// One element's details as GetDetailsOfElements reports them: for a placed element, and for an element
+// type's tool defaults (GetElementDefaults), which have no GUID - the fields read from the element's
+// memo by its GUID (polygons, holes, sections, text content) are then left out.
+static GS::ObjectState ElementDetailsObjectState (API_Element& elem, const Stories& stories, const std::function<bool (const char*)>& isFieldRequested)
+{
+    GS::ObjectState detailsOfElement;
+    const API_ElemTypeID typeID = GetElemTypeId (elem.header);
+
+    if (isFieldRequested ("type")) {
+        detailsOfElement.Add ("type", GetElementTypeNonLocalizedName (typeID));
+    }
+    if (isFieldRequested ("floorIndex")) {
+        detailsOfElement.Add ("floorIndex", elem.header.floorInd);
+    }
+    if (isFieldRequested ("layerIndex")) {
+        detailsOfElement.Add ("layerIndex", GetAttributeIndex (elem.header.layer));
+    }
+    if (isFieldRequested ("drawIndex")) {
+        detailsOfElement.Add ("drawIndex", static_cast<short> (elem.header.drwIndex));
+    }
+    if (isFieldRequested ("hotlinkId") && elem.header.hotlinkGuid != APINULLGuid) {
+        detailsOfElement.Add ("hotlinkId", CreateGuidObjectState (elem.header.hotlinkGuid));
+    }
+
+    if (isFieldRequested ("id")) {
+        API_ElementMemo memo = {};
+        const GS::OnExit guard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+        ACAPI_Element_GetMemo (elem.header.guid, &memo, APIMemoMask_ElemInfoString);
+
+        detailsOfElement.Add ("id", memo.elemInfoString != nullptr ? *memo.elemInfoString : GS::EmptyUniString);
+    }
+
+    if (!isFieldRequested ("details")) {
+        if (isFieldRequested ("floorPlanPolygons") && CanHaveFloorPlanCutFill (typeID)) {
+            AddFloorPlanPolygonsIfAvailable (elem.header.guid, detailsOfElement);
+        }
+        return detailsOfElement;
+    }
+
+    GS::ObjectState typeSpecificDetails;
+
+    switch (typeID) {
+        case API_WallID:
+            switch (elem.wall.type) {
+                case APIWtyp_Normal:
+                    typeSpecificDetails.Add ("geometryType", "Straight");
+                    typeSpecificDetails.Add ("arcAngle", elem.wall.angle);
+                    break;
+                case APIWtyp_Trapez:
+                    typeSpecificDetails.Add ("geometryType", "Trapezoid");
+                    break;
+                case APIWtyp_Poly:
+                    {
+                        typeSpecificDetails.Add ("geometryType", "Polygonal");
+                        AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs");
+                        break;
+                    }
+            }
+            typeSpecificDetails.Add ("structureType", StructureTypeToString (elem.wall.modelElemStructureType));
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.wall.bottomOffset, stories));
+            typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.wall.begC));
+            typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.wall.endC));
+            typeSpecificDetails.Add ("height", elem.wall.height);
+            typeSpecificDetails.Add ("bottomOffset", elem.wall.bottomOffset);
+            typeSpecificDetails.Add ("offset", elem.wall.offset);
+            typeSpecificDetails.Add ("flipped", elem.wall.flipped);
+            if (elem.wall.type == APIWtyp_Poly) {
+                typeSpecificDetails.Add ("begThickness", 0);
+                typeSpecificDetails.Add ("endThickness", 0);
+            } else {
+                typeSpecificDetails.Add ("begThickness", elem.wall.thickness);
+                typeSpecificDetails.Add ("endThickness", elem.wall.thickness1);
+            }
+            if (StructureTypeToString (elem.wall.modelElemStructureType) == "Composite") {
+                typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, elem.wall.composite)));
+            } else if (StructureTypeToString (elem.wall.modelElemStructureType) == "Basic") {
+                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, elem.wall.buildingMaterial)));
+            } else if (StructureTypeToString (elem.wall.modelElemStructureType) == "Profile") {
+                typeSpecificDetails.Add ("profileId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ProfileID, elem.wall.profileAttr)));
+            }
+            typeSpecificDetails.Add ("referenceLineLocation", WallReferenceLineLocationToString (elem.wall.referenceLineLocation));
+            {
+                const char* profileTypeStr = "Normal";
+                if (elem.wall.profileType == APISect_Slanted) {
+                    profileTypeStr = "Slanted";
+                } else if (elem.wall.profileType == APISect_Trapez) {
+                    profileTypeStr = "Trapez";
+                } else if (elem.wall.profileType == APISect_Poly) {
+                    profileTypeStr = "Poly";
+                }
+                typeSpecificDetails.Add ("profileType", profileTypeStr);
+            }
+            typeSpecificDetails.Add ("slantAlpha", elem.wall.slantAlpha);
+            typeSpecificDetails.Add ("slantBeta", elem.wall.slantBeta);
+            typeSpecificDetails.Add ("topOffset", elem.wall.topOffset);
+            typeSpecificDetails.Add ("relativeTopStory", elem.wall.relativeTopStory);
+            typeSpecificDetails.Add ("zoneRel", ZoneRelToString (elem.wall.zoneRel));
+            typeSpecificDetails.Add ("visibility", CreateStoryVisibilityObjectState (elem.wall.visibility));
+            typeSpecificDetails.Add ("isAutoOnStoryVisibility", elem.wall.isAutoOnStoryVisibility);
+            typeSpecificDetails.Add ("referenceMaterial", CreateOverriddenMaterialObjectState (elem.wall.refMat));
+            typeSpecificDetails.Add ("oppositeMaterial", CreateOverriddenMaterialObjectState (elem.wall.oppMat));
+            typeSpecificDetails.Add ("sideMaterial", CreateOverriddenMaterialObjectState (elem.wall.sidMat));
+#ifdef ServerMainVers_2700
+            typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.wall.cutFillPen));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.wall.cutFillBackgroundPen));
+#else
+            typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
+#endif
+            typeSpecificDetails.Add ("contourPen", (Int32) elem.wall.contPen);
+            typeSpecificDetails.Add ("contourPen3D", (Int32) elem.wall.contPen3D);
+            if (elem.wall.contLtype != APIInvalidAttributeIndex) {
+                typeSpecificDetails.Add ("contourLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, elem.wall.contLtype)));
+            }
+            if (elem.wall.belowViewLineType != APIInvalidAttributeIndex) {
+                typeSpecificDetails.Add ("belowViewLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, elem.wall.belowViewLineType)));
+            }
+            typeSpecificDetails.Add ("aboveViewLinePen", (Int32) elem.wall.aboveViewLinePen);
+            if (elem.wall.aboveViewLineType != APIInvalidAttributeIndex) {
+                typeSpecificDetails.Add ("aboveViewLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, elem.wall.aboveViewLineType)));
+            }
+            typeSpecificDetails.Add ("displayOption", ElemDisplayOptionToString (elem.wall.displayOption));
+            typeSpecificDetails.Add ("viewDepthLimitation", ViewDepthLimitationToString (elem.wall.viewDepthLimitation));
+            typeSpecificDetails.Add ("connectionPriority", (Int32) elem.wall.wallConnPriority);
+            typeSpecificDetails.Add ("useCompositePriority", elem.wall.useCompositePriority);
+            typeSpecificDetails.Add ("junctionSequence", elem.wall.sequence);
+            {
+                GS::ObjectState linkOS;
+                linkOS.Add ("homeStoryDifference", (Int32) elem.wall.linkToSettings.homeStoryDifference);
+                linkOS.Add ("newCreationMode", elem.wall.linkToSettings.newCreationMode);
+                typeSpecificDetails.Add ("linkToSettings", linkOS);
+            }
+            typeSpecificDetails.Add ("inheritEndSurface", elem.wall.inheritEndSurface);
+            typeSpecificDetails.Add ("alignTexture", elem.wall.alignTexture);
+            typeSpecificDetails.Add ("offsetFromOutside", elem.wall.offsetFromOutside);
+            typeSpecificDetails.Add ("polyCanChange", elem.wall.polyCanChange);
+            typeSpecificDetails.Add ("materialsChained", elem.wall.materialsChained);
+            typeSpecificDetails.Add ("logHeight", elem.wall.logHeight);
+            typeSpecificDetails.Add ("hasWindow", elem.wall.hasWindow);
+            typeSpecificDetails.Add ("hasDoor", elem.wall.hasDoor);
+            break;
+
+        case API_BeamID: {
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.beam.level, stories));
+            typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.beam.begC));
+            typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.beam.endC));
+            typeSpecificDetails.Add ("level", elem.beam.level);
+            typeSpecificDetails.Add ("offset", elem.beam.offset);
+            typeSpecificDetails.Add ("slantAngle", elem.beam.slantAngle);
+            typeSpecificDetails.Add ("arcAngle", elem.beam.curveAngle);
+            typeSpecificDetails.Add ("verticalCurveHeight", elem.beam.verticalCurveHeight);
+            const char* beamShapeStr = "Straight";
+            if (elem.beam.beamShape == API_HorizontallyCurvedBeam) {
+                beamShapeStr = "HorizontallyCurved";
+            } else if (elem.beam.beamShape == API_VerticallyCurvedBeam) {
+                beamShapeStr = "VerticallyCurved";
+            }
+            typeSpecificDetails.Add ("beamShape", beamShapeStr);
+            typeSpecificDetails.Add ("isSlanted", elem.beam.isSlanted);
+            typeSpecificDetails.Add ("isFlipped", elem.beam.isFlipped);
+            typeSpecificDetails.Add ("profileAngle", elem.beam.profileAngle);
+            typeSpecificDetails.Add ("anchorPoint", AnchorIdToString (static_cast<API_AnchorID> (elem.beam.anchorPoint)));
+#ifdef ServerMainVers_2700
+            typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.beam.cutFillPen));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.beam.cutFillBackgroundPen));
+#else
+            typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
+#endif
+            typeSpecificDetails.Add ("coverFill", CreateCoverFillObjectState (
+                elem.beam.useCoverFill, elem.beam.useCoverFillFromSurface, elem.beam.coverFillOrientationComesFrom3D,
+                elem.beam.coverFillType, elem.beam.coverFillForegroundPen, elem.beam.coverFillBackgroundPen,
+                elem.beam.coverFillTransformationType, elem.beam.coverFillTransformation));
+            AddBeamHolesFromMemo (elem.header.guid, typeSpecificDetails, "holes");
+            AddBeamSectionFromMemo (elem.header.guid, typeSpecificDetails);
+            AddBeamSegmentSurfacesFromMemo (elem.header.guid, typeSpecificDetails);
+        } break;
+
+        case API_BeamSegmentID: {
+            const API_AssemblySegmentData& segment = elem.beamSegment.assemblySegmentData;
+            if (elem.beamSegment.owner != APINULLGuid) {
+                typeSpecificDetails.Add ("ownerElementId", CreateGuidObjectState (elem.beamSegment.owner));
+            }
+            typeSpecificDetails.Add ("structureType", StructureTypeToString (segment.modelElemStructureType));
+            typeSpecificDetails.Add ("width", segment.nominalWidth);
+            typeSpecificDetails.Add ("height", segment.nominalHeight);
+            typeSpecificDetails.Add ("isWidthAndHeightLinked", segment.isWidthAndHeightLinked);
+            typeSpecificDetails.Add ("circleBased", segment.circleBased);
+            if (segment.modelElemStructureType == API_BasicStructure) {
+                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, segment.buildingMaterial)));
+            } else if (segment.modelElemStructureType == API_ProfileStructure) {
+                typeSpecificDetails.Add ("profileId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ProfileID, segment.profileAttr)));
+            }
+        } break;
+
+        case API_SlabID:
+            typeSpecificDetails.Add ("structureType", StructureTypeToString (elem.slab.modelElemStructureType));
+            typeSpecificDetails.Add ("thickness", elem.slab.thickness);
+            typeSpecificDetails.Add ("level", elem.slab.level);
+            typeSpecificDetails.Add ("offsetFromTop", elem.slab.offsetFromTop);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.slab.level, stories));
+            typeSpecificDetails.Add ("referencePlaneLocation", SlabReferencePlaneLocationToString (elem.slab.referencePlaneLocation));
+            if (StructureTypeToString (elem.slab.modelElemStructureType) == "Composite") {
+                typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, elem.slab.composite)));
+            } else {
+                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, elem.slab.buildingMaterial)));
+            }
+            typeSpecificDetails.Add ("topMaterial", CreateOverriddenMaterialObjectState (elem.slab.topMat));
+            typeSpecificDetails.Add ("sideMaterial", CreateOverriddenMaterialObjectState (elem.slab.sideMat));
+            typeSpecificDetails.Add ("bottomMaterial", CreateOverriddenMaterialObjectState (elem.slab.botMat));
+#ifdef ServerMainVers_2700
+            typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.slab.cutFillPen));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.slab.cutFillBackgroundPen));
+#else
+            typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
+#endif
+            {
+                GS::ObjectState floorFillOs;
+                floorFillOs.Add ("use", elem.slab.useFloorFill);
+                floorFillOs.Add ("foregroundPen", elem.slab.floorFillPen);
+                floorFillOs.Add ("backgroundPen", elem.slab.floorFillBGPen);
+                floorFillOs.Add ("fillId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_FilltypeID, elem.slab.floorFillInd)));
+                floorFillOs.Add ("use3DHatching", elem.slab.use3DHatching);
+                floorFillOs.Add ("orientation", CreateHatchOrientationObjectState (elem.slab.hatchOrientation));
+                typeSpecificDetails.Add ("floorFill", floorFillOs);
+            }
+            AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
+            break;
+
+        case API_ZoneID:
+            typeSpecificDetails.Add ("name", GS::UniString (elem.zone.roomName));
+            typeSpecificDetails.Add ("numberStr", GS::UniString (elem.zone.roomNoStr));
+            typeSpecificDetails.Add ("categoryAttributeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ZoneCatID, elem.zone.catInd)));
+            typeSpecificDetails.Add ("stampPosition", Create2DCoordinateObjectState (elem.zone.pos));
+            typeSpecificDetails.Add ("stampAngle", elem.zone.stampAngle);
+            typeSpecificDetails.Add ("fixedStampAngle", elem.zone.fixedAngle);
+            typeSpecificDetails.Add ("isManual", elem.zone.manual);
+            if (!elem.zone.manual) {
+                // The point an automatic zone was placed from (CreateZones geometry.referencePosition);
+                // the stamp is often moved away from it, so it is the only way to recreate the zone as it was.
+                typeSpecificDetails.Add ("referencePosition", Create2DCoordinateObjectState (elem.zone.refPos));
+            }
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.zone.roomBaseLev, stories));
+            AddZoneContourAndCoverFill (elem.zone, typeSpecificDetails);
+            typeSpecificDetails.Add ("height", elem.zone.roomHeight);
+            typeSpecificDetails.Add ("bottomOffset", elem.zone.roomBaseLev);
+            typeSpecificDetails.Add ("topOffset", elem.zone.roomTopOffset);
+            typeSpecificDetails.Add ("relativeTopStory", elem.zone.relativeTopStory);
+            typeSpecificDetails.Add ("floorThickness", elem.zone.roomFlThick);
+            AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
+            break;
+
+        case API_ColumnID:
+            typeSpecificDetails.Add ("origin", Create2DCoordinateObjectState (elem.column.origoPos));
+            typeSpecificDetails.Add ("coreAnchor", AnchorIdToString (static_cast<API_AnchorID> (elem.column.coreAnchor)));
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.column.bottomOffset, stories));
+            typeSpecificDetails.Add ("height", elem.column.height);
+            typeSpecificDetails.Add ("bottomOffset", elem.column.bottomOffset);
+            typeSpecificDetails.Add ("axisRotationAngle", elem.column.axisRotationAngle);
+            typeSpecificDetails.Add ("isSlanted", elem.column.isSlanted);
+            typeSpecificDetails.Add ("slantAngle", elem.column.slantAngle);
+            typeSpecificDetails.Add ("slantDirectionAngle", elem.column.slantDirectionAngle);
+            typeSpecificDetails.Add ("isFlipped", elem.column.isFlipped);
+            typeSpecificDetails.Add ("wrapping", elem.column.wrapping);
+            typeSpecificDetails.Add ("topOffset", elem.column.topOffset);
+            typeSpecificDetails.Add ("relativeTopStory", elem.column.relativeTopStory);
+#ifdef ServerMainVers_2700
+            typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.column.cutFillPen));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.column.cutFillBackgroundPen));
+#else
+            typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
+            typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
+#endif
+            typeSpecificDetails.Add ("coverFill", CreateCoverFillObjectState (
+                elem.column.useCoverFill, elem.column.useCoverFillFromSurface, elem.column.coverFillOrientationComesFrom3D,
+                elem.column.coverFillType, elem.column.coverFillForegroundPen, elem.column.coverFillBackgroundPen,
+                elem.column.coverFillTransformationType, elem.column.coverFillTransformation));
+            AddColumnSectionFromMemo (elem.header.guid, typeSpecificDetails);
+            AddColumnSegmentSurfacesFromMemo (elem.header.guid, typeSpecificDetails);
+            break;
+
+        case API_ColumnSegmentID: {
+            const API_AssemblySegmentData& segment = elem.columnSegment.assemblySegmentData;
+            if (elem.columnSegment.owner != APINULLGuid) {
+                typeSpecificDetails.Add ("ownerElementId", CreateGuidObjectState (elem.columnSegment.owner));
+            }
+            typeSpecificDetails.Add ("structureType", StructureTypeToString (segment.modelElemStructureType));
+            typeSpecificDetails.Add ("width", segment.nominalWidth);
+            typeSpecificDetails.Add ("depth", segment.nominalHeight);
+            typeSpecificDetails.Add ("isWidthAndHeightLinked", segment.isWidthAndHeightLinked);
+            typeSpecificDetails.Add ("circleBased", segment.circleBased);
+            if (segment.modelElemStructureType == API_BasicStructure) {
+                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, segment.buildingMaterial)));
+            } else if (segment.modelElemStructureType == API_ProfileStructure) {
+                typeSpecificDetails.Add ("profileId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ProfileID, segment.profileAttr)));
+            }
+        } break;
+
+        case API_DoorID:
+        case API_WindowID:
+            AddLibPartBasedElementDetails (typeSpecificDetails, elem.window.openingBase.libInd, elem.window.owner);
+            typeSpecificDetails.Add ("width", elem.window.openingBase.width);
+            typeSpecificDetails.Add ("height", elem.window.openingBase.height);
+            typeSpecificDetails.Add ("sillHeight", elem.window.lower);
+            typeSpecificDetails.Add ("centerOffset", elem.window.objLoc);
+            typeSpecificDetails.Add ("reflected", elem.window.openingBase.reflected);
+            typeSpecificDetails.Add ("refSide", elem.window.openingBase.refSide);
+            typeSpecificDetails.Add ("oSide", elem.window.openingBase.oSide);
+            // The same two members ModifyWindows/ModifyDoors write (#581), so a script can read
+            // its own write back (#895).
+            typeSpecificDetails.Add ("reveal", elem.window.reveal);
+            typeSpecificDetails.Add ("revealDepthOffset", elem.window.revealDepthOffset);
+            break;
+
+        case API_LabelID: {
+            AddLibPartBasedElementDetails (typeSpecificDetails, ((elem.label.labelClass == APILblClass_Symbol) ? elem.label.u.symbol.libInd : -1), elem.label.parent, GetElemTypeId (elem.label.parentType));
+            typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.label.begC));
+            typeSpecificDetails.Add ("midCoordinate", Create2DCoordinateObjectState (elem.label.midC));
+            typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.label.endC));
+            typeSpecificDetails.Add ("hasLeaderLine", elem.label.hasLeaderLine);
+
+            typeSpecificDetails.Add ("labelClass", elem.label.labelClass == APILblClass_Symbol ? "Symbol" : "Text");
+
+            GS::ObjectState leaderLineOS;
+            TextLabelDetails::AddLabelLeaderLineDetails (leaderLineOS, elem.label);
+            typeSpecificDetails.Add ("leaderLine", leaderLineOS);
+
+            if (elem.label.labelClass == APILblClass_Text) {
+                GS::ObjectState styleOS;
+                TextLabelDetails::AddTextStyleDetails (styleOS, elem.label.u.text, true);
+                typeSpecificDetails.Add ("style", styleOS);
+                if (TextLabelDetails::AddTextContent (typeSpecificDetails, elem.header.guid) != NoError) {
+                    // The fields are required by the schema; an unreadable memo reads as empty content.
+                    typeSpecificDetails.Add ("text", GS::EmptyUniString);
+                    typeSpecificDetails.Add ("paragraphCount", 0);
+                }
+            } else {
+                GS::ObjectState symbolStyleOS;
+                TextLabelDetails::AddLabelSymbolStyleDetails (symbolStyleOS, elem.label);
+                typeSpecificDetails.Add ("symbolStyle", symbolStyleOS);
+            }
+            break;
+        }
+
+        case API_TextID: {
+            // The flat fields are the ones SetDetailsOfElements takes back (position, angle, height,
+            // justification) and the Grasshopper TextDetails type reads; "style" carries the full
+            // style state and AddTextContent adds "text", "paragraphCount" and the styled "runs".
+            typeSpecificDetails.Add ("position", Create2DCoordinateObjectState (elem.text.loc));
+            typeSpecificDetails.Add ("angle", elem.text.angle);
+            typeSpecificDetails.Add ("height", elem.text.size);
+            typeSpecificDetails.Add ("pen", (Int32) elem.text.pen);
+            typeSpecificDetails.Add ("justification", JustificationToString (static_cast<API_JustID> (elem.text.just)));
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+            GS::ObjectState styleOS;
+            TextLabelDetails::AddTextStyleDetails (styleOS, elem.text, true);
+            typeSpecificDetails.Add ("style", styleOS);
+            if (TextLabelDetails::AddTextContent (typeSpecificDetails, elem.header.guid) != NoError) {
+                // The fields are required by the schema; an unreadable memo reads as empty content.
+                typeSpecificDetails.Add ("text", GS::EmptyUniString);
+                typeSpecificDetails.Add ("paragraphCount", 0);
+            }
+            break;
+        }
+
+        case API_LevelDimensionID: {
+            // "level" is the value the dimension shows: the parent's height at "position"
+            // for an associative one, the floor level or the static value otherwise.
+            typeSpecificDetails.Add ("position", Create2DCoordinateObjectState (elem.levelDimension.loc));
+            typeSpecificDetails.Add ("level", elem.levelDimension.level);
+            typeSpecificDetails.Add ("staticLevel", elem.levelDimension.staticLevel);
+            const API_ElemTypeID parentTypeId = GetElemTypeId (elem.levelDimension.parentType);
+            if (parentTypeId != API_ZombieElemID && elem.levelDimension.parentGuid != APINULLGuid) {
+                typeSpecificDetails.Add ("ownerElementId", CreateGuidObjectState (elem.levelDimension.parentGuid));
+                typeSpecificDetails.Add ("ownerElementType", GetElementTypeNonLocalizedName (parentTypeId));
+            }
+            typeSpecificDetails.Add ("dimForm", (Int32) elem.levelDimension.dimForm);
+            typeSpecificDetails.Add ("needPlus", elem.levelDimension.needPlus);
+            typeSpecificDetails.Add ("pen", (Int32) elem.levelDimension.pen);
+            typeSpecificDetails.Add ("textHeight", elem.levelDimension.note1.noteSize);
+            typeSpecificDetails.Add ("textPen", (Int32) elem.levelDimension.note1.notePen);
+            typeSpecificDetails.Add ("markerSize", elem.levelDimension.markerSize);
+            typeSpecificDetails.Add ("angle", elem.levelDimension.angle);
+            typeSpecificDetails.Add ("origin", DimensionOriginToString (elem.levelDimension.origin));
+            break;
+        }
+
+        case API_ObjectID:
+        case API_LampID:
+            AddObjectLampDetails (typeSpecificDetails, elem, stories);
+            break;
+
+        case API_DetailID:
+        case API_WorksheetID: {
+            typeSpecificDetails.Add ("basePoint", Create2DCoordinateObjectState (elem.detail.pos));
+            typeSpecificDetails.Add ("angle", elem.detail.angle);
+            typeSpecificDetails.Add ("markerId", CreateGuidObjectState (elem.detail.markId));
+            typeSpecificDetails.Add ("detailName", GS::UniString (elem.detail.detailName));
+            typeSpecificDetails.Add ("detailIdStr", GS::UniString (elem.detail.detailIdStr));
+            typeSpecificDetails.Add ("isHorizontalMarker", elem.detail.horizontalMarker);
+            typeSpecificDetails.Add ("isWindowOpened", elem.detail.windOpened);
+            AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "clipPolygon");
+            GS::ObjectState linkDataOS;
+            switch (elem.detail.linkData.referringLevel) {
+                case API_ReferringLevel::ReferredToView:
+                    linkDataOS.Add ("referredView", CreateGuidObjectState (elem.detail.linkData.referredView));
+                    break;
+                case API_ReferringLevel::ReferredToDrawing:
+                    linkDataOS.Add ("referredDrawing", CreateGuidObjectState (elem.detail.linkData.referredDrawing));
+                    break;
+                case API_ReferringLevel::ReferredToViewPoint:
+                    linkDataOS.Add ("referredPMViewPoint", CreateGuidObjectState (elem.detail.linkData.referredPMViewPoint));
+                    break;
+                default:
+                    break;
+            }
+            typeSpecificDetails.Add ("linkData", linkDataOS);
+        } break;
+
+        case API_PolyLineID: {
+            AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "coordinates", "arcs");
+            AddLineFamilySettingsDetails (typeSpecificDetails, elem.polyLine.linePen, elem.polyLine.ltypeInd, elem.polyLine.roomSeparator);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+        } break;
+
+        case API_HatchID: {
+            AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "coordinates", "arcs", "holes", "polygonOutline", "polygonArcs");
+            typeSpecificDetails.Add ("contourPenIndex", elem.hatch.contPen.penIndex);
+            typeSpecificDetails.Add ("fillPenIndex", elem.hatch.fillPen.penIndex);
+            typeSpecificDetails.Add ("fillBackgroundPenIndex", elem.hatch.fillBGPen);
+            // The RGB colors are only reported when they override the pens, so their absence means the pens are in effect.
+            if ((elem.hatch.hatchFlags & APIHatch_HasFgRGBColor) != 0) {
+                typeSpecificDetails.Add ("foregroundColor", CreateColorObjectState (elem.hatch.foregroundRGB));
+            }
+            if ((elem.hatch.hatchFlags & APIHatch_HasBkgRGBColor) != 0) {
+                typeSpecificDetails.Add ("backgroundColor", CreateColorObjectState (elem.hatch.backgroundRGB));
+            }
+            typeSpecificDetails.Add ("fillId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_FilltypeID, elem.hatch.fillInd)));
+            typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, elem.hatch.buildingMaterial)));
+            typeSpecificDetails.Add ("roomSpecial", (Int32) elem.hatch.roomSpecial);
+            typeSpecificDetails.Add ("showArea", elem.hatch.showArea);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+        } break;
+
+        case API_LineID: {
+            typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.line.begC));
+            typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.line.endC));
+            AddLineFamilySettingsDetails (typeSpecificDetails, elem.line.linePen, elem.line.ltypeInd, elem.line.roomSeparator);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+        } break;
+
+        case API_ArcID:
+        case API_CircleID: {
+            typeSpecificDetails.Add ("origin", Create2DCoordinateObjectState (elem.arc.origC));
+            typeSpecificDetails.Add ("radius", elem.arc.r);
+            typeSpecificDetails.Add ("angle", elem.arc.angle);
+            typeSpecificDetails.Add ("ratio", elem.arc.ratio);
+            if (typeID == API_ArcID) {
+                typeSpecificDetails.Add ("begAngle", elem.arc.begAng);
+                typeSpecificDetails.Add ("endAngle", elem.arc.endAng);
+            }
+            typeSpecificDetails.Add ("reflected", elem.arc.reflected);
+            typeSpecificDetails.Add ("isWhole", elem.arc.whole);
+            AddLineFamilySettingsDetails (typeSpecificDetails, elem.arc.linePen, elem.arc.ltypeInd, elem.arc.roomSeparator);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+        } break;
+
+        case API_HotspotID: {
+            typeSpecificDetails.Add ("position", Create2DCoordinateObjectState (elem.hotspot.pos));
+            typeSpecificDetails.Add ("height", elem.hotspot.height);
+            typeSpecificDetails.Add ("penIndex", elem.hotspot.pen);
+        } break;
+
+        case API_SplineID: {
+            // Spline has no poly/nCoords summary field (unlike Line/PolyLine/Hatch) - the
+            // point count is implicit in the coords memo handle's byte size. Index 0 is a
+            // real point here (not a dummy sentinel), and no closing duplicate is stored even
+            // when closed=true (per the ACAPI_SplineType reference docs).
+            API_ElementMemo splineMemo = {};
+            if (ACAPI_Element_GetMemo (elem.header.guid, &splineMemo, APIMemoMask_Polygon) == NoError && splineMemo.coords != nullptr) {
+                const Int32 nPoints = BMGetHandleSize (reinterpret_cast<GSHandle> (splineMemo.coords)) / sizeof (API_Coord);
+                const auto& coords = typeSpecificDetails.AddList<GS::ObjectState> ("coordinates");
+                for (Int32 i = 0; i < nPoints; ++i) {
+                    coords (Create2DCoordinateObjectState ((*splineMemo.coords)[i]));
+                }
+                // The handles, in the format ModifySplines takes them, when the curve has its own.
+                if (!elem.spline.autoSmooth && splineMemo.bezierDirs != nullptr &&
+                    BMGetHandleSize (reinterpret_cast<GSHandle> (splineMemo.bezierDirs)) / (GSSize) sizeof (API_SplineDir) >= nPoints) {
+                    const auto& dirs = typeSpecificDetails.AddList<GS::ObjectState> ("bezierDirections");
+                    for (Int32 i = 0; i < nPoints; ++i) {
+                        const API_SplineDir& dir = (*splineMemo.bezierDirs)[i];
+                        GS::ObjectState dirOS;
+                        dirOS.Add ("lenPrev", dir.lenPrev);
+                        dirOS.Add ("lenNext", dir.lenNext);
+                        dirOS.Add ("dirAng", dir.dirAng);
+                        dirs (dirOS);
+                    }
+                }
+            }
+            ACAPI_DisposeElemMemoHdls (&splineMemo);
+            typeSpecificDetails.Add ("autoSmooth", elem.spline.autoSmooth);
+            typeSpecificDetails.Add ("closed", elem.spline.closed);
+            AddLineFamilySettingsDetails (typeSpecificDetails, elem.spline.linePen, elem.spline.ltypeInd, elem.spline.roomSeparator);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
+            ElementDetailsReaders::AddSplineBezierDirections (elem, typeSpecificDetails);
+        } break;
+
+        case API_RailingID: {
+            typeSpecificDetails.Add ("bottomOffset", elem.railing.bottomOffset);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.railing.bottomOffset, stories));
+            typeSpecificDetails.Add ("height", elem.railing.defSegment.height);
+            AddRailingReferenceLineAndSegments (elem, typeSpecificDetails);
+        } break;
+
+        case API_CurtainWallID: {
+            typeSpecificDetails.Add ("height", elem.curtainWall.height);
+            double actualHeight = 0.0;
+            if (ACAPI_CurtainWall_GetCWHeight (&elem.header.guid, &actualHeight) == NoError) {
+                typeSpecificDetails.Add ("actualHeight", actualHeight);
+            }
+            typeSpecificDetails.Add ("angle", elem.curtainWall.angle);
+            typeSpecificDetails.Add ("flipped", elem.curtainWall.flipped);
+        } break;
+
+        case API_CurtainWallSegmentID: {
+            typeSpecificDetails.Add ("begCoordinate", Create3DCoordinateObjectState (elem.cwSegment.begC));
+            typeSpecificDetails.Add ("endCoordinate", Create3DCoordinateObjectState (elem.cwSegment.endC));
+            typeSpecificDetails.Add ("extrusionVector", Create3DCoordinateObjectState (elem.cwSegment.extrusion));
+            typeSpecificDetails.Add ("gridOrigin", Create3DCoordinateObjectState (elem.cwSegment.gridOrigin));
+            typeSpecificDetails.Add ("gridAngle", elem.cwSegment.gridAngle);
+            if (elem.cwSegment.segmentType == API_CWSegmentTypeID::APICWSeT_Arc) {
+                typeSpecificDetails.Add ("arcOrigin", Create3DCoordinateObjectState (elem.cwSegment.arcOrigin));
+                typeSpecificDetails.Add ("isNegativeArc", elem.cwSegment.negArc);
+            }
+        } break;
+
+        case API_CurtainWallPanelID: {
+            API_Element ownerCW = {};
+            ownerCW.header.guid = elem.cwPanel.owner;
+
+            API_ElementMemo cwMemo = {};
+            const GS::OnExit cwMemoGuard ([&cwMemo] () { ACAPI_DisposeElemMemoHdls (&cwMemo); });
+            const bool hasOwnerMemo = ACAPI_Element_Get (&ownerCW) == NoError &&
+                ACAPI_Element_GetMemo (ownerCW.header.guid, &cwMemo, APIMemoMask_CWallSegments | APIMemoMask_CWallFrames) == NoError &&
+                cwMemo.cWallSegments != nullptr && elem.cwPanel.segmentID < ownerCW.curtainWall.nSegments &&
+                (cwMemo.cWallFrames != nullptr || ownerCW.curtainWall.nFrames == 0);
+
+            // The frames of the panel are found through the grid mesh of its segment; without
+            // any of these memo parts the panel is reported without its polygon and frames.
+            API_ElementMemo cwSegmentMemo = {};
+            const GS::OnExit cwSegmentMemoGuard ([&cwSegmentMemo] () { ACAPI_DisposeElemMemoHdls (&cwSegmentMemo); });
+            API_ElementMemo cwPanelMemo = {};
+            const GS::OnExit cwPanelMemoGuard ([&cwPanelMemo] () { ACAPI_DisposeElemMemoHdls (&cwPanelMemo); });
+            const bool hasPanelGrid = hasOwnerMemo &&
+                ACAPI_Element_GetMemo (cwMemo.cWallSegments[elem.cwPanel.segmentID].head.guid, &cwSegmentMemo, APIMemoMask_CWSegGridMesh) == NoError &&
+                cwSegmentMemo.cWSegGridMesh != nullptr &&
+                ACAPI_Element_GetMemo (elem.header.guid, &cwPanelMemo, APIMemoMask_CWallPanels) == NoError &&
+                cwPanelMemo.cWallPanelGridIDTable != nullptr && cwPanelMemo.cWallPanelGridIDTable->ContainsKey (elem.header.guid);
+
+            std::vector<const API_CWFrameType*> framePtrs;
+            if (hasPanelGrid) {
+                const API_GridMesh& ownerGridMesh = *cwSegmentMemo.cWSegGridMesh;
+                const GS::Array<API_GridElemID>& gridIDs = (*cwPanelMemo.cWallPanelGridIDTable)[elem.header.guid];
+                GS::Array<API_GridElemID> gridMeshPolygonIDs = gridIDs;
+                for (const API_GridElemID& polygonID : gridIDs) {
+                    const API_GridMeshPolygon* gridMeshPolygon = ownerGridMesh.meshPolygons.GetPtr (polygonID);
+                    if (gridMeshPolygon == nullptr) {
+                        continue;
+                    }
+                    gridMeshPolygonIDs.Append (gridMeshPolygon->neighbourIDs[API_GridMeshDirection::API_GridMeshRight]);
+                    gridMeshPolygonIDs.Append (gridMeshPolygon->neighbourIDs[API_GridMeshDirection::API_GridMeshUpper]);
+                }
+
+                const std::vector<API_Coord> panelSurfaceCoords = GetCWPanelSurfaceCoords (elem.header.guid);
+
+                std::vector<const API_CWFrameType*> cornerFramesOfNextSegment;
+                for (UIndex i = 0; i < ownerCW.curtainWall.nFrames; ++i) {
+                    const API_CWFrameType& frame = cwMemo.cWallFrames[i];
+                    if (frame.segmentID == elem.cwPanel.segmentID) {
+                        if (gridMeshPolygonIDs.Contains (frame.cellID) && ownerGridMesh.meshPolygons.ContainsKey (frame.cellID)) {
+                            for (size_t iCoord = 0; iCoord + 1 < panelSurfaceCoords.size (); ++iCoord) {
+                                const API_Coord& c1 = panelSurfaceCoords[iCoord];
+                                const API_Coord& c2 = panelSurfaceCoords[iCoord + 1];
+                                auto frameSurfaceCoords = GetFrameSurfaceParamCoords (frame, ownerGridMesh);
+
+                                if ((IsSame2DCoordinate (frameSurfaceCoords.first, c1) && IsSame2DCoordinate (frameSurfaceCoords.second, c2)) ||
+                                    (IsSame2DCoordinate (frameSurfaceCoords.first, c2) && IsSame2DCoordinate (frameSurfaceCoords.second, c1))) {
+                                    framePtrs.push_back (&frame);
+                                    break;
+                                }
+                            }
+                            if (framePtrs.size () >= elem.cwPanel.edgesNum) {
+                                break;
+                            }
+                        }
+                    } else if (frame.classID == APICWFrameClass_Corner && frame.segmentID == elem.cwPanel.segmentID + 1) {
+                        cornerFramesOfNextSegment.push_back (&frame);
+                    }
+                }
+                if (framePtrs.size () < elem.cwPanel.edgesNum) {
+                    framePtrs.insert (framePtrs.end (), cornerFramesOfNextSegment.begin (), cornerFramesOfNextSegment.end ());
+                }
+            }
+
+            const auto& polygonCoordinates = typeSpecificDetails.AddList<GS::ObjectState> ("polygonCoordinates");
+            const auto& frames = typeSpecificDetails.AddList<GS::ObjectState> ("frames");
+            if (!framePtrs.empty ()) {
+                std::vector<API_Coord3D> polygonCoords = { framePtrs[0]->begC, framePtrs[0]->endC };
+                frames (CreateElementIdObjectState (framePtrs[0]->head.guid));
+                framePtrs.erase (framePtrs.begin ());
+                while (polygonCoords.size() != (elem.cwPanel.edgesNum + 1) && !framePtrs.empty ()) {
+                    auto* framePtr = FindNextFrameOfPanel (framePtrs, polygonCoords);
+                    if (framePtr == nullptr) {
+                        break;
+                    }
+                    frames (CreateElementIdObjectState (framePtr->head.guid));
+                }
+                for (const auto& c : polygonCoords) {
+                    polygonCoordinates (Create3DCoordinateObjectState (c));
+                }
+            }
+            typeSpecificDetails.Add ("isHidden", elem.cwPanel.hidden);
+            bool isDegenerate = false;
+            if (ACAPI_CurtainWall_IsCWPanelDegenerate (&elem.header.guid, &isDegenerate) == NoError) {
+                typeSpecificDetails.Add ("isDegenerate", isDegenerate);
+            }
+            typeSpecificDetails.Add ("segmentIndex", elem.cwPanel.segmentID);
+            typeSpecificDetails.Add ("className", GS::UniString (elem.cwPanel.className));
+        } break;
+
+        case API_CurtainWallFrameID: {
+            typeSpecificDetails.Add ("begCoordinate", Create3DCoordinateObjectState (elem.cwFrame.begC));
+            typeSpecificDetails.Add ("endCoordinate", Create3DCoordinateObjectState (elem.cwFrame.endC));
+            typeSpecificDetails.Add ("orientationVector", Create3DCoordinateObjectState (elem.cwFrame.orientation));
+            typeSpecificDetails.Add ("panelConnectionHole", GS::ObjectState ("d", elem.cwFrame.d, "w", elem.cwFrame.w));
+            typeSpecificDetails.Add ("frameContour", GS::ObjectState ("a1", elem.cwFrame.a1, "a2", elem.cwFrame.a2, "b1", elem.cwFrame.b1, "b2", elem.cwFrame.b2));
+            typeSpecificDetails.Add ("segmentIndex", elem.cwFrame.segmentID);
+            typeSpecificDetails.Add ("className", GS::UniString (elem.cwFrame.className));
+            typeSpecificDetails.Add ("type",
+                elem.cwFrame.classID == APICWFrameClass_Merged ? "Deleted" :
+                elem.cwFrame.classID == APICWFrameClass_Boundary ? "Boundary" :
+                elem.cwFrame.classID == APICWFrameClass_Corner ? "Corner" :
+                elem.cwFrame.classID == APICWFrameClass_Division ? "Division" : "Custom");
+        } break;
+
+        case API_MeshID: {
+            typeSpecificDetails.Add ("level", elem.mesh.level);
+            if (elem.mesh.skirt == 3) {
+                typeSpecificDetails.Add ("skirtType", "SurfaceOnlyWithoutSkirt");
+            } else if (elem.mesh.skirt == 2) {
+                typeSpecificDetails.Add ("skirtType", "WithSkirt");
+            } else {
+                typeSpecificDetails.Add ("skirtType", "SolidBodyWithSkirt");
+            }
+            typeSpecificDetails.Add ("skirtLevel", elem.mesh.skirtLevel);
+            if (elem.mesh.smoothRidges == APIRidge_AllSharp) {
+                typeSpecificDetails.Add ("ridges", GS::UniString ("AllSharp"));
+            } else if (elem.mesh.smoothRidges == APIRidge_AllSmooth) {
+                typeSpecificDetails.Add ("ridges", GS::UniString ("AllSmooth"));
+            } else {
+                typeSpecificDetails.Add ("ridges", GS::UniString ("UserDefined"));
+            }
+            typeSpecificDetails.Add ("showLines",    elem.mesh.showLines != 0);
+            typeSpecificDetails.Add ("contourPen",   (Int32)elem.mesh.contPen);
+            typeSpecificDetails.Add ("levelPen",     (Int32)elem.mesh.levelPen);
+            typeSpecificDetails.Add ("lineTypeIndex", GetAttributeIndex (elem.mesh.ltypeInd));
+            constexpr bool includeZCoords = true;
+            AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonCoordinates", "polygonArcs", "holes", "polygonCoordinates", "polygonArcs", includeZCoords);
+            if (elem.mesh.levelLines.nSubLines > 0) {
+                API_ElementMemo memo = {};
+                const GS::OnExit guard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+                if (ACAPI_Element_GetMemo (elem.header.guid, &memo, APIMemoMask_MeshLevel) == NoError && memo.meshLevelCoords != nullptr && memo.meshLevelEnds != nullptr) {
+                    const auto& sublines = typeSpecificDetails.AddList<GS::ObjectState> ("sublines");
+                    const GSSize nSublines = BMhGetSize (reinterpret_cast<GSHandle> (memo.meshLevelEnds)) / sizeof (Int32);
+                    const GSSize nLevelCoords = BMhGetSize (reinterpret_cast<GSHandle> (memo.meshLevelCoords)) / sizeof (API_MeshLevelCoord);
+                    Int32 iCoord = 0;
+                    for (Int32 i = 0; i < nSublines; ++i) {
+                        GS::ObjectState subline;
+                        const auto& coordinates = subline.AddList<GS::ObjectState> ("coordinates");
+
+                        const Int32 nCoords = static_cast<Int32> (std::min<GSSize> ((*memo.meshLevelEnds)[i], nLevelCoords));
+                        for (; iCoord < nCoords; ++iCoord) {
+                            const API_MeshLevelCoord& coord = (*memo.meshLevelCoords)[iCoord];
+                            coordinates (Create3DCoordinateObjectState (coord.c));
+                        }
+                        sublines (subline);
+                    }
+                }
+            }
+        } break;
+
+        case API_DrawingID: {
+            typeSpecificDetails.Add ("pos",           Create2DCoordinateObjectState (elem.drawing.pos));
+            typeSpecificDetails.Add ("angle",         elem.drawing.angle);
+            typeSpecificDetails.Add ("ratio",         elem.drawing.ratio);
+            typeSpecificDetails.Add ("drawingScale",  elem.drawing.drawingScale);
+            typeSpecificDetails.Add ("modelOffset",   Create2DCoordinateObjectState (elem.drawing.modelOffset));
+            typeSpecificDetails.Add ("isCutWithFrame", elem.drawing.isCutWithFrame);
+            // Not the source view: once the Drawing exists Archicad reports its own link id
+            // here, which navigator commands do not accept (#1480).
+            typeSpecificDetails.Add ("navigatorItemId", CreateGuidObjectState (elem.drawing.drawingGuid));
+            typeSpecificDetails.Add ("bounds", GS::ObjectState (
+                "xMin", elem.drawing.bounds.xMin,
+                "yMin", elem.drawing.bounds.yMin,
+                "xMax", elem.drawing.bounds.xMax,
+                "yMax", elem.drawing.bounds.yMax));
+            if (elem.drawing.isCutWithFrame) {
+                AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "clipPolygon");
+            }
+            typeSpecificDetails.Add ("nameType",      DrawingNameTypeToString (elem.drawing.nameType));
+            if (elem.drawing.nameType == APIName_CustomName) {
+                typeSpecificDetails.Add ("customName", GS::UniString (elem.drawing.name));
+            }
+            typeSpecificDetails.Add ("numberingType",  DrawingNumberingTypeToString (elem.drawing.numberingType));
+            if (elem.drawing.numberingType == APINumbering_CustomNum) {
+                typeSpecificDetails.Add ("customNumber", GS::UniString (elem.drawing.customNumber));
+            }
+            typeSpecificDetails.Add ("isInNumbering", elem.drawing.isInNumbering);
+            typeSpecificDetails.Add ("hasBorderLine",       elem.drawing.hasBorderLine);
+            typeSpecificDetails.Add ("borderLineTypeIndex", GetAttributeIndex (elem.drawing.borderLineType));
+            typeSpecificDetails.Add ("borderPenIndex",      (Int32)elem.drawing.borderPen);
+            typeSpecificDetails.Add ("borderSize",          elem.drawing.borderSize);
+            // Library part index of the title (API_DrawingTitle::libInd) - a negative/invalid
+            // index here means no title object is instantiated at all (nothing to show); setting
+            // it to a valid index (e.g. copied from another drawing) is what makes Archicad
+            // create the title's own placed element.
+            typeSpecificDetails.Add ("titleLibraryPartIndex", elem.drawing.title.libInd);
+            if (elem.drawing.title.guid != APINULLGuid) {
+                // The drawing title is itself a placed, GDL-parameterized library part
+                // element (API_DrawingTitle::guid, "object based elements from Archicad 10")
+                // - its own settings (font/pen/size aside) are reachable like any other
+                // element via this id, e.g. with Get/SetGDLParametersOfElements.
+                typeSpecificDetails.Add ("titleElementId", CreateGuidObjectState (elem.drawing.title.guid));
+            }
+        } break;
+
+        case API_MorphID:
+            AddMorphBodyFromMemo (elem, typeSpecificDetails);
+            break;
+
+        case API_RoofID: {
+            const API_ShellBaseType& base = elem.roof.shellBase;
+            typeSpecificDetails.Add ("roofClass", elem.roof.roofClass == API_PolyRoofID ? "MultiPlane" : "SinglePlane");
+            typeSpecificDetails.Add ("structureType", StructureTypeToString (base.modelElemStructureType));
+            typeSpecificDetails.Add ("thickness", base.thickness);
+            typeSpecificDetails.Add ("level", base.level);
+            typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, base.level, stories));
+            if (StructureTypeToString (base.modelElemStructureType) == "Composite") {
+                typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, base.composite)));
+            } else {
+                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, base.buildingMaterial)));
+            }
+            AddShellBaseSurfaces (base, typeSpecificDetails);
+            if (elem.roof.roofClass == API_PlaneRoofID) {
+                typeSpecificDetails.Add ("angle", elem.roof.u.planeRoof.angle);
+                GS::ObjectState pivotLine;
+                pivotLine.Add ("begin", Create2DCoordinateObjectState (elem.roof.u.planeRoof.baseLine.c1));
+                pivotLine.Add ("end", Create2DCoordinateObjectState (elem.roof.u.planeRoof.baseLine.c2));
+                typeSpecificDetails.Add ("pivotLine", pivotLine);
+            } else {
+                typeSpecificDetails.Add ("eavesOverhang", elem.roof.u.polyRoof.eavesOverHang);
+                const auto& levels = typeSpecificDetails.AddList<GS::ObjectState> ("levels");
+                for (short i = 0; i < elem.roof.u.polyRoof.levelNum && i < 16; ++i) {
+                    GS::ObjectState level;
+                    level.Add ("height", elem.roof.u.polyRoof.levelData[i].levelHeight);
+                    level.Add ("angle", elem.roof.u.polyRoof.levelData[i].levelAngle);
+                    levels (level);
+                }
+                AddPivotPolygonFromMemo (elem.header.guid, typeSpecificDetails);
+            }
+            // the roof's own polygon: the plane roof's outline, the multi-plane roof's contour
+            AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
+            AddEdgeSideMaterialsFromMemo (elem.header.guid, typeSpecificDetails);
+        } break;
+
+        case API_ShellID: {
+            // The structure, as for roofs: both keep it in an API_ShellBaseType (#1663).
+            const API_ShellBaseType& base = elem.shell.shellBase;
+            switch (elem.shell.shellClass) {
+                case API_RevolvedShellID: typeSpecificDetails.Add ("shellClass", "Revolved"); break;
+                case API_RuledShellID:    typeSpecificDetails.Add ("shellClass", "Ruled");    break;
+                default:                  typeSpecificDetails.Add ("shellClass", "Extruded"); break;
+            }
+            typeSpecificDetails.Add ("structureType", StructureTypeToString (base.modelElemStructureType));
+            typeSpecificDetails.Add ("thickness", base.thickness);
+            if (StructureTypeToString (base.modelElemStructureType) == "Composite") {
+                typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, base.composite)));
+            } else {
+                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, base.buildingMaterial)));
+            }
+        } break;
+
+        case API_HotlinkID: {
+            API_Coord3D origin;
+            double rotationAngle;
+            bool mirrored;
+            DecomposeHotlinkTransformation (elem.hotlink.transformation, origin, rotationAngle, mirrored);
+            typeSpecificDetails.Add ("hotlinkType", elem.hotlink.type == APIHotlink_XRef ? "XRef" : "Module");
+            typeSpecificDetails.Add ("hotlinkNodeId", CreateGuidObjectState (elem.hotlink.hotlinkNodeGuid));
+            typeSpecificDetails.Add ("origin", Create3DCoordinateObjectState (origin));
+            typeSpecificDetails.Add ("rotationAngle", rotationAngle);
+            typeSpecificDetails.Add ("mirrored", mirrored);
+            typeSpecificDetails.Add ("floorDifference", elem.hotlink.floorDifference);
+            typeSpecificDetails.Add ("skipNested", elem.hotlink.skipNested);
+            typeSpecificDetails.Add ("suspendFixAngle", elem.hotlink.suspendFixAngle);
+            typeSpecificDetails.Add ("ignoreTopFloorLinks", elem.hotlink.ignoreTopFloorLinks);
+            typeSpecificDetails.Add ("relinkWallOpenings", elem.hotlink.relinkWallOpenings);
+            typeSpecificDetails.Add ("adjustLevelDiffs", elem.hotlink.adjustLevelDiffs);
+        } break;
+
+        case API_StairID: {
+            // The fields CreateStairs writes, read back (#823). The finishes and the
+            // structure are modeled by the Stair's subelements (risers, treads and
+            // structures, see GetSubelementsOfHierarchicalElements), not by the Stair
+            // element itself. On a placed stair basePlane.basePoint is in model
+            // coordinates: its z is the absolute elevation of the base, not the offset
+            // from the home story CreateStairs writes (a stair created on the 6.4 story
+            // reads 6.4, and read 12.8 as zCoordinate when the story level was added
+            // again, #1561), and its x and y are the origin of the baseline's coords.
+            const API_Coord3D& basePoint = elem.stair.basePlane.basePoint;
+            typeSpecificDetails.Add ("stepNum", static_cast<Int32> (elem.stair.stepNum));
+            typeSpecificDetails.Add ("riserHeight", elem.stair.riserHeight);
+            typeSpecificDetails.Add ("treadDepth", elem.stair.treadDepth);
+            typeSpecificDetails.Add ("flightWidth", elem.stair.flightWidth);
+            typeSpecificDetails.Add ("totalHeight", elem.stair.totalHeight);
+            typeSpecificDetails.Add ("level", basePoint.z - GetZPos (elem.header.floorInd, 0.0, stories));
+            typeSpecificDetails.Add ("zCoordinate", basePoint.z);
+            typeSpecificDetails.Add ("finishVisible", elem.stair.finishVisible);
+            AddStairBaseLineFromMemo (elem.header.guid, { basePoint.x, basePoint.y }, typeSpecificDetails);
+        } break;
+
+        case API_CutPlaneID: {
+            // The fields CreateSections writes, read back (#1607).
+            typeSpecificDetails.Add ("name", GS::UniString (elem.cutPlane.segment.cutPlName));
+            typeSpecificDetails.Add ("idStr", GS::UniString (elem.cutPlane.segment.cutPlIdStr));
+            AddSectionLinesFromMemo (elem.header.guid, static_cast<GSSize> (elem.cutPlane.segment.nMainCoord), static_cast<GSSize> (elem.cutPlane.segment.nDepthCoord), typeSpecificDetails);
+        } break;
+
+        case API_SkylightID:
+            AddLibPartBasedElementDetails (typeSpecificDetails, elem.skylight.openingBase.libInd, elem.skylight.owner);
+            ElementDetailsReaders::AddSkylightDetails (elem, stories, typeSpecificDetails);
+            break;
+
+        case API_CameraID:
+            ElementDetailsReaders::AddCameraDetails (elem, typeSpecificDetails);
+            break;
+
+        case API_CamSetID:
+            ElementDetailsReaders::AddCameraSetDetails (elem, typeSpecificDetails);
+            break;
+
+        case API_ChangeMarkerID:
+            ElementDetailsReaders::AddChangeMarkerDetails (elem, typeSpecificDetails);
+            break;
+
+        case API_PictureID:
+            ElementDetailsReaders::AddPictureDetails (elem, typeSpecificDetails);
+            break;
+
+        default:
+            typeSpecificDetails.Add ("error", "Not yet supported element type");
+            break;
+    }
+
+    detailsOfElement.Add ("details", typeSpecificDetails);
+    if (isFieldRequested ("floorPlanPolygons") && CanHaveFloorPlanCutFill (typeID)) {
+        AddFloorPlanPolygonsIfAvailable (elem.header.guid, detailsOfElement);
+    }
+    return detailsOfElement;
+}
+
 GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
 {
     GS::Array<GS::ObjectState> elements;
@@ -1611,856 +2487,169 @@ GS::ObjectState GetDetailsOfElementsCommand::Execute (const GS::ObjectState& par
             continue;
         }
 
-        GS::ObjectState detailsOfElement;
-        const API_ElemTypeID typeID = GetElemTypeId (elem.header);
+        detailsOfElements (ElementDetailsObjectState (elem, stories, isFieldRequested));
+    }
 
-        if (isFieldRequested ("type")) {
-            detailsOfElement.Add ("type", GetElementTypeNonLocalizedName (typeID));
-        }
-        if (isFieldRequested ("floorIndex")) {
-            detailsOfElement.Add ("floorIndex", elem.header.floorInd);
-        }
-        if (isFieldRequested ("layerIndex")) {
-            detailsOfElement.Add ("layerIndex", GetAttributeIndex (elem.header.layer));
-        }
-        if (isFieldRequested ("drawIndex")) {
-            detailsOfElement.Add ("drawIndex", static_cast<short> (elem.header.drwIndex));
-        }
-        if (isFieldRequested ("hotlinkId") && elem.header.hotlinkGuid != APINULLGuid) {
-            detailsOfElement.Add ("hotlinkId", CreateGuidObjectState (elem.header.hotlinkGuid));
-        }
+    return response;
+}
 
-        if (isFieldRequested ("id")) {
-            API_ElementMemo memo = {};
-            const GS::OnExit guard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
-            ACAPI_Element_GetMemo (elem.header.guid, &memo, APIMemoMask_ElemInfoString);
+GetElementDefaultsCommand::GetElementDefaultsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
 
-            detailsOfElement.Add ("id", memo.elemInfoString != nullptr ? *memo.elemInfoString : GS::EmptyUniString);
-        }
+GS::String GetElementDefaultsCommand::GetName () const
+{
+    return "GetElementDefaults";
+}
 
-        if (!isFieldRequested ("details")) {
-            if (isFieldRequested ("floorPlanPolygons") && CanHaveFloorPlanCutFill (typeID)) {
-                AddFloorPlanPolygonsIfAvailable (elem.header.guid, detailsOfElement);
+GS::Optional<GS::UniString> GetElementDefaultsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elementTypes": {
+                "type": "array",
+                "description": "The element types whose tool defaults to read.",
+                "items": {
+                    "$ref": "#/ElementType"
+                },
+                "minItems": 1
             }
-            detailsOfElements (detailsOfElement);
+        },
+        "additionalProperties": false,
+        "required": [
+            "elementTypes"
+        ]
+    })";
+}
+
+GS::Optional<GS::UniString> GetElementDefaultsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "defaults": {
+                "type": "array",
+                "description": "One entry per input element type, in the same order. A type whose defaults cannot be read gets an error entry in its place.",
+                "items": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "description": "The settings a new element of the type starts from, in the shape GetDetailsOfElements returns them. Fields read from a placed element's memo (polygons, holes, profiles, text content) are absent.",
+                            "properties": {
+                                "type": {
+                                    "$ref": "#/ElementType"
+                                },
+                                "floorIndex": {
+                                    "type": "number"
+                                },
+                                "layerIndex": {
+                                    "type": "number"
+                                },
+                                "drawIndex": {
+                                    "type": "number"
+                                },
+                                "details": {
+                                    "$ref": "#/TypeSpecificDetails"
+                                }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                                "type",
+                                "layerIndex",
+                                "details"
+                            ]
+                        },
+                        {
+                            "$ref": "#/ErrorItem"
+                        }
+                    ]
+                }
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "defaults"
+        ]
+    })";
+}
+
+// The types whose details code reads nothing but the element record and memos it guards against a
+// missing GUID (a stair's baseline, a railing's reference line, a morph's body and a curtain wall's
+// actual height are then left out); other types (hotlinks, sub-elements...) read owners or
+// databases a default element does not have.
+static bool HasReadableDefaults (API_ElemTypeID typeID)
+{
+    switch (typeID) {
+        case API_WallID:
+        case API_ColumnID:
+        case API_BeamID:
+        case API_SlabID:
+        case API_RoofID:
+        case API_ShellID:
+        case API_ZoneID:
+        case API_DoorID:
+        case API_WindowID:
+        case API_SkylightID:
+        case API_ObjectID:
+        case API_LampID:
+        case API_LineID:
+        case API_ArcID:
+        case API_CircleID:
+        case API_PolyLineID:
+        case API_SplineID:
+        case API_HatchID:
+        case API_HotspotID:
+        case API_MeshID:
+        case API_MorphID:
+        case API_StairID:
+        case API_RailingID:
+        case API_CurtainWallID:
+            return true;
+        default:
+            return false;
+    }
+}
+
+GS::ObjectState GetElementDefaultsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    GS::Array<GS::UniString> elementTypes;
+    parameters.Get ("elementTypes", elementTypes);
+
+    GS::ObjectState response;
+    const auto& defaults = response.AddList<GS::ObjectState> ("defaults");
+    const Stories stories = GetStories ();
+    const auto isFieldRequested = [] (const char* fieldName) {
+        return strcmp (fieldName, "id") != 0 && strcmp (fieldName, "hotlinkId") != 0 && strcmp (fieldName, "floorPlanPolygons") != 0;
+    };
+
+    for (const GS::UniString& typeName : elementTypes) {
+        const API_ElemTypeID typeID = GetElementTypeFromNonLocalizedName (typeName);
+        if (typeID == API_ZombieElemID || !HasReadableDefaults (typeID)) {
+            defaults (CreateErrorResponse (APIERR_BADPARS, "The defaults of " + typeName + " cannot be read."));
             continue;
         }
 
-        GS::ObjectState typeSpecificDetails;
-
-        switch (typeID) {
-            case API_WallID:
-                switch (elem.wall.type) {
-                    case APIWtyp_Normal:
-                        typeSpecificDetails.Add ("geometryType", "Straight");
-                        typeSpecificDetails.Add ("arcAngle", elem.wall.angle);
-                        break;
-                    case APIWtyp_Trapez:
-                        typeSpecificDetails.Add ("geometryType", "Trapezoid");
-                        break;
-                    case APIWtyp_Poly:
-                        {
-                            typeSpecificDetails.Add ("geometryType", "Polygonal");
-                            AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs");
-                            break;
-                        }
-                }
-                typeSpecificDetails.Add ("structureType", StructureTypeToString (elem.wall.modelElemStructureType));
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.wall.bottomOffset, stories));
-                typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.wall.begC));
-                typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.wall.endC));
-                typeSpecificDetails.Add ("height", elem.wall.height);
-                typeSpecificDetails.Add ("bottomOffset", elem.wall.bottomOffset);
-                typeSpecificDetails.Add ("offset", elem.wall.offset);
-                typeSpecificDetails.Add ("flipped", elem.wall.flipped);
-                if (elem.wall.type == APIWtyp_Poly) {
-                    typeSpecificDetails.Add ("begThickness", 0);
-                    typeSpecificDetails.Add ("endThickness", 0);
-                } else {
-                    typeSpecificDetails.Add ("begThickness", elem.wall.thickness);
-                    typeSpecificDetails.Add ("endThickness", elem.wall.thickness1);
-                }
-                if (StructureTypeToString (elem.wall.modelElemStructureType) == "Composite") {
-                    typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, elem.wall.composite)));
-                } else if (StructureTypeToString (elem.wall.modelElemStructureType) == "Basic") {
-                    typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, elem.wall.buildingMaterial)));
-                } else if (StructureTypeToString (elem.wall.modelElemStructureType) == "Profile") {
-                    typeSpecificDetails.Add ("profileId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ProfileID, elem.wall.profileAttr)));
-                }
-                typeSpecificDetails.Add ("referenceLineLocation", WallReferenceLineLocationToString (elem.wall.referenceLineLocation));
-                {
-                    const char* profileTypeStr = "Normal";
-                    if (elem.wall.profileType == APISect_Slanted) {
-                        profileTypeStr = "Slanted";
-                    } else if (elem.wall.profileType == APISect_Trapez) {
-                        profileTypeStr = "Trapez";
-                    } else if (elem.wall.profileType == APISect_Poly) {
-                        profileTypeStr = "Poly";
-                    }
-                    typeSpecificDetails.Add ("profileType", profileTypeStr);
-                }
-                typeSpecificDetails.Add ("slantAlpha", elem.wall.slantAlpha);
-                typeSpecificDetails.Add ("slantBeta", elem.wall.slantBeta);
-                typeSpecificDetails.Add ("topOffset", elem.wall.topOffset);
-                typeSpecificDetails.Add ("relativeTopStory", elem.wall.relativeTopStory);
-                typeSpecificDetails.Add ("zoneRel", ZoneRelToString (elem.wall.zoneRel));
-                typeSpecificDetails.Add ("visibility", CreateStoryVisibilityObjectState (elem.wall.visibility));
-                typeSpecificDetails.Add ("isAutoOnStoryVisibility", elem.wall.isAutoOnStoryVisibility);
-                typeSpecificDetails.Add ("referenceMaterial", CreateOverriddenMaterialObjectState (elem.wall.refMat));
-                typeSpecificDetails.Add ("oppositeMaterial", CreateOverriddenMaterialObjectState (elem.wall.oppMat));
-                typeSpecificDetails.Add ("sideMaterial", CreateOverriddenMaterialObjectState (elem.wall.sidMat));
-#ifdef ServerMainVers_2700
-                typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.wall.cutFillPen));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.wall.cutFillBackgroundPen));
+        API_Element element = {};
+        API_ElementMemo memo = {};
+        const GS::OnExit guard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+#ifdef ServerMainVers_2600
+        element.header.type = typeID;
 #else
-                typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
+        element.header.typeID = typeID;
 #endif
-                typeSpecificDetails.Add ("contourPen", (Int32) elem.wall.contPen);
-                typeSpecificDetails.Add ("contourPen3D", (Int32) elem.wall.contPen3D);
-                if (elem.wall.contLtype != APIInvalidAttributeIndex) {
-                    typeSpecificDetails.Add ("contourLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, elem.wall.contLtype)));
-                }
-                if (elem.wall.belowViewLineType != APIInvalidAttributeIndex) {
-                    typeSpecificDetails.Add ("belowViewLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, elem.wall.belowViewLineType)));
-                }
-                typeSpecificDetails.Add ("aboveViewLinePen", (Int32) elem.wall.aboveViewLinePen);
-                if (elem.wall.aboveViewLineType != APIInvalidAttributeIndex) {
-                    typeSpecificDetails.Add ("aboveViewLineTypeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_LinetypeID, elem.wall.aboveViewLineType)));
-                }
-                typeSpecificDetails.Add ("displayOption", ElemDisplayOptionToString (elem.wall.displayOption));
-                typeSpecificDetails.Add ("viewDepthLimitation", ViewDepthLimitationToString (elem.wall.viewDepthLimitation));
-                typeSpecificDetails.Add ("connectionPriority", (Int32) elem.wall.wallConnPriority);
-                typeSpecificDetails.Add ("useCompositePriority", elem.wall.useCompositePriority);
-                typeSpecificDetails.Add ("junctionSequence", elem.wall.sequence);
-                {
-                    GS::ObjectState linkOS;
-                    linkOS.Add ("homeStoryDifference", (Int32) elem.wall.linkToSettings.homeStoryDifference);
-                    linkOS.Add ("newCreationMode", elem.wall.linkToSettings.newCreationMode);
-                    typeSpecificDetails.Add ("linkToSettings", linkOS);
-                }
-                typeSpecificDetails.Add ("inheritEndSurface", elem.wall.inheritEndSurface);
-                typeSpecificDetails.Add ("alignTexture", elem.wall.alignTexture);
-                typeSpecificDetails.Add ("offsetFromOutside", elem.wall.offsetFromOutside);
-                typeSpecificDetails.Add ("polyCanChange", elem.wall.polyCanChange);
-                typeSpecificDetails.Add ("materialsChained", elem.wall.materialsChained);
-                typeSpecificDetails.Add ("logHeight", elem.wall.logHeight);
-                typeSpecificDetails.Add ("hasWindow", elem.wall.hasWindow);
-                typeSpecificDetails.Add ("hasDoor", elem.wall.hasDoor);
-                break;
-
-            case API_BeamID: {
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.beam.level, stories));
-                typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.beam.begC));
-                typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.beam.endC));
-                typeSpecificDetails.Add ("level", elem.beam.level);
-                typeSpecificDetails.Add ("offset", elem.beam.offset);
-                typeSpecificDetails.Add ("slantAngle", elem.beam.slantAngle);
-                typeSpecificDetails.Add ("arcAngle", elem.beam.curveAngle);
-                typeSpecificDetails.Add ("verticalCurveHeight", elem.beam.verticalCurveHeight);
-                const char* beamShapeStr = "Straight";
-                if (elem.beam.beamShape == API_HorizontallyCurvedBeam) {
-                    beamShapeStr = "HorizontallyCurved";
-                } else if (elem.beam.beamShape == API_VerticallyCurvedBeam) {
-                    beamShapeStr = "VerticallyCurved";
-                }
-                typeSpecificDetails.Add ("beamShape", beamShapeStr);
-                typeSpecificDetails.Add ("isSlanted", elem.beam.isSlanted);
-                typeSpecificDetails.Add ("isFlipped", elem.beam.isFlipped);
-                typeSpecificDetails.Add ("profileAngle", elem.beam.profileAngle);
-                typeSpecificDetails.Add ("anchorPoint", AnchorIdToString (static_cast<API_AnchorID> (elem.beam.anchorPoint)));
-#ifdef ServerMainVers_2700
-                typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.beam.cutFillPen));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.beam.cutFillBackgroundPen));
-#else
-                typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
-#endif
-                typeSpecificDetails.Add ("coverFill", CreateCoverFillObjectState (
-                    elem.beam.useCoverFill, elem.beam.useCoverFillFromSurface, elem.beam.coverFillOrientationComesFrom3D,
-                    elem.beam.coverFillType, elem.beam.coverFillForegroundPen, elem.beam.coverFillBackgroundPen,
-                    elem.beam.coverFillTransformationType, elem.beam.coverFillTransformation));
-                AddBeamHolesFromMemo (elem.header.guid, typeSpecificDetails, "holes");
-                AddBeamSectionFromMemo (elem.header.guid, typeSpecificDetails);
-                AddBeamSegmentSurfacesFromMemo (elem.header.guid, typeSpecificDetails);
-            } break;
-
-            case API_BeamSegmentID: {
-                const API_AssemblySegmentData& segment = elem.beamSegment.assemblySegmentData;
-                if (elem.beamSegment.owner != APINULLGuid) {
-                    typeSpecificDetails.Add ("ownerElementId", CreateGuidObjectState (elem.beamSegment.owner));
-                }
-                typeSpecificDetails.Add ("structureType", StructureTypeToString (segment.modelElemStructureType));
-                typeSpecificDetails.Add ("width", segment.nominalWidth);
-                typeSpecificDetails.Add ("height", segment.nominalHeight);
-                typeSpecificDetails.Add ("isWidthAndHeightLinked", segment.isWidthAndHeightLinked);
-                typeSpecificDetails.Add ("circleBased", segment.circleBased);
-                if (segment.modelElemStructureType == API_BasicStructure) {
-                    typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, segment.buildingMaterial)));
-                } else if (segment.modelElemStructureType == API_ProfileStructure) {
-                    typeSpecificDetails.Add ("profileId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ProfileID, segment.profileAttr)));
-                }
-            } break;
-
-            case API_SlabID:
-                typeSpecificDetails.Add ("structureType", StructureTypeToString (elem.slab.modelElemStructureType));
-                typeSpecificDetails.Add ("thickness", elem.slab.thickness);
-                typeSpecificDetails.Add ("level", elem.slab.level);
-                typeSpecificDetails.Add ("offsetFromTop", elem.slab.offsetFromTop);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.slab.level, stories));
-                typeSpecificDetails.Add ("referencePlaneLocation", SlabReferencePlaneLocationToString (elem.slab.referencePlaneLocation));
-                if (StructureTypeToString (elem.slab.modelElemStructureType) == "Composite") {
-                    typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, elem.slab.composite)));
-                } else {
-                    typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, elem.slab.buildingMaterial)));
-                }
-                typeSpecificDetails.Add ("topMaterial", CreateOverriddenMaterialObjectState (elem.slab.topMat));
-                typeSpecificDetails.Add ("sideMaterial", CreateOverriddenMaterialObjectState (elem.slab.sideMat));
-                typeSpecificDetails.Add ("bottomMaterial", CreateOverriddenMaterialObjectState (elem.slab.botMat));
-#ifdef ServerMainVers_2700
-                typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.slab.cutFillPen));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.slab.cutFillBackgroundPen));
-#else
-                typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
-#endif
-                {
-                    GS::ObjectState floorFillOs;
-                    floorFillOs.Add ("use", elem.slab.useFloorFill);
-                    floorFillOs.Add ("foregroundPen", elem.slab.floorFillPen);
-                    floorFillOs.Add ("backgroundPen", elem.slab.floorFillBGPen);
-                    floorFillOs.Add ("fillId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_FilltypeID, elem.slab.floorFillInd)));
-                    floorFillOs.Add ("use3DHatching", elem.slab.use3DHatching);
-                    floorFillOs.Add ("orientation", CreateHatchOrientationObjectState (elem.slab.hatchOrientation));
-                    typeSpecificDetails.Add ("floorFill", floorFillOs);
-                }
-                AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
-                break;
-
-            case API_ZoneID:
-                typeSpecificDetails.Add ("name", GS::UniString (elem.zone.roomName));
-                typeSpecificDetails.Add ("numberStr", GS::UniString (elem.zone.roomNoStr));
-                typeSpecificDetails.Add ("categoryAttributeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ZoneCatID, elem.zone.catInd)));
-                typeSpecificDetails.Add ("stampPosition", Create2DCoordinateObjectState (elem.zone.pos));
-                typeSpecificDetails.Add ("stampAngle", elem.zone.stampAngle);
-                typeSpecificDetails.Add ("fixedStampAngle", elem.zone.fixedAngle);
-                typeSpecificDetails.Add ("isManual", elem.zone.manual);
-                if (!elem.zone.manual) {
-                    // The point an automatic zone was placed from (CreateZones geometry.referencePosition);
-                    // the stamp is often moved away from it, so it is the only way to recreate the zone as it was.
-                    typeSpecificDetails.Add ("referencePosition", Create2DCoordinateObjectState (elem.zone.refPos));
-                }
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.zone.roomBaseLev, stories));
-                AddZoneContourAndCoverFill (elem.zone, typeSpecificDetails);
-                typeSpecificDetails.Add ("height", elem.zone.roomHeight);
-                typeSpecificDetails.Add ("bottomOffset", elem.zone.roomBaseLev);
-                typeSpecificDetails.Add ("topOffset", elem.zone.roomTopOffset);
-                typeSpecificDetails.Add ("relativeTopStory", elem.zone.relativeTopStory);
-                typeSpecificDetails.Add ("floorThickness", elem.zone.roomFlThick);
-                AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
-                break;
-
-            case API_ColumnID:
-                typeSpecificDetails.Add ("origin", Create2DCoordinateObjectState (elem.column.origoPos));
-                typeSpecificDetails.Add ("coreAnchor", AnchorIdToString (static_cast<API_AnchorID> (elem.column.coreAnchor)));
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.column.bottomOffset, stories));
-                typeSpecificDetails.Add ("height", elem.column.height);
-                typeSpecificDetails.Add ("bottomOffset", elem.column.bottomOffset);
-                typeSpecificDetails.Add ("axisRotationAngle", elem.column.axisRotationAngle);
-                typeSpecificDetails.Add ("isSlanted", elem.column.isSlanted);
-                typeSpecificDetails.Add ("slantAngle", elem.column.slantAngle);
-                typeSpecificDetails.Add ("slantDirectionAngle", elem.column.slantDirectionAngle);
-                typeSpecificDetails.Add ("isFlipped", elem.column.isFlipped);
-                typeSpecificDetails.Add ("wrapping", elem.column.wrapping);
-                typeSpecificDetails.Add ("topOffset", elem.column.topOffset);
-                typeSpecificDetails.Add ("relativeTopStory", elem.column.relativeTopStory);
-#ifdef ServerMainVers_2700
-                typeSpecificDetails.Add ("cutFillPen", CreateOverriddenPenObjectState (elem.column.cutFillPen));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", CreateOverriddenPenObjectState (elem.column.cutFillBackgroundPen));
-#else
-                typeSpecificDetails.Add ("cutFillPen", GS::ObjectState ("overridden", false));
-                typeSpecificDetails.Add ("cutFillBackgroundPen", GS::ObjectState ("overridden", false));
-#endif
-                typeSpecificDetails.Add ("coverFill", CreateCoverFillObjectState (
-                    elem.column.useCoverFill, elem.column.useCoverFillFromSurface, elem.column.coverFillOrientationComesFrom3D,
-                    elem.column.coverFillType, elem.column.coverFillForegroundPen, elem.column.coverFillBackgroundPen,
-                    elem.column.coverFillTransformationType, elem.column.coverFillTransformation));
-                AddColumnSectionFromMemo (elem.header.guid, typeSpecificDetails);
-                AddColumnSegmentSurfacesFromMemo (elem.header.guid, typeSpecificDetails);
-                break;
-
-            case API_ColumnSegmentID: {
-                const API_AssemblySegmentData& segment = elem.columnSegment.assemblySegmentData;
-                if (elem.columnSegment.owner != APINULLGuid) {
-                    typeSpecificDetails.Add ("ownerElementId", CreateGuidObjectState (elem.columnSegment.owner));
-                }
-                typeSpecificDetails.Add ("structureType", StructureTypeToString (segment.modelElemStructureType));
-                typeSpecificDetails.Add ("width", segment.nominalWidth);
-                typeSpecificDetails.Add ("depth", segment.nominalHeight);
-                typeSpecificDetails.Add ("isWidthAndHeightLinked", segment.isWidthAndHeightLinked);
-                typeSpecificDetails.Add ("circleBased", segment.circleBased);
-                if (segment.modelElemStructureType == API_BasicStructure) {
-                    typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, segment.buildingMaterial)));
-                } else if (segment.modelElemStructureType == API_ProfileStructure) {
-                    typeSpecificDetails.Add ("profileId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_ProfileID, segment.profileAttr)));
-                }
-            } break;
-
-            case API_DoorID:
-            case API_WindowID:
-                AddLibPartBasedElementDetails (typeSpecificDetails, elem.window.openingBase.libInd, elem.window.owner);
-                typeSpecificDetails.Add ("width", elem.window.openingBase.width);
-                typeSpecificDetails.Add ("height", elem.window.openingBase.height);
-                typeSpecificDetails.Add ("sillHeight", elem.window.lower);
-                typeSpecificDetails.Add ("centerOffset", elem.window.objLoc);
-                typeSpecificDetails.Add ("reflected", elem.window.openingBase.reflected);
-                typeSpecificDetails.Add ("refSide", elem.window.openingBase.refSide);
-                typeSpecificDetails.Add ("oSide", elem.window.openingBase.oSide);
-                // The same two members ModifyWindows/ModifyDoors write (#581), so a script can read
-                // its own write back (#895).
-                typeSpecificDetails.Add ("reveal", elem.window.reveal);
-                typeSpecificDetails.Add ("revealDepthOffset", elem.window.revealDepthOffset);
-                break;
-
-            case API_LabelID: {
-                AddLibPartBasedElementDetails (typeSpecificDetails, ((elem.label.labelClass == APILblClass_Symbol) ? elem.label.u.symbol.libInd : -1), elem.label.parent, GetElemTypeId (elem.label.parentType));
-                typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.label.begC));
-                typeSpecificDetails.Add ("midCoordinate", Create2DCoordinateObjectState (elem.label.midC));
-                typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.label.endC));
-                typeSpecificDetails.Add ("hasLeaderLine", elem.label.hasLeaderLine);
-
-                typeSpecificDetails.Add ("labelClass", elem.label.labelClass == APILblClass_Symbol ? "Symbol" : "Text");
-
-                GS::ObjectState leaderLineOS;
-                TextLabelDetails::AddLabelLeaderLineDetails (leaderLineOS, elem.label);
-                typeSpecificDetails.Add ("leaderLine", leaderLineOS);
-
-                if (elem.label.labelClass == APILblClass_Text) {
-                    GS::ObjectState styleOS;
-                    TextLabelDetails::AddTextStyleDetails (styleOS, elem.label.u.text, true);
-                    typeSpecificDetails.Add ("style", styleOS);
-                    if (TextLabelDetails::AddTextContent (typeSpecificDetails, elem.header.guid) != NoError) {
-                        // The fields are required by the schema; an unreadable memo reads as empty content.
-                        typeSpecificDetails.Add ("text", GS::EmptyUniString);
-                        typeSpecificDetails.Add ("paragraphCount", 0);
-                    }
-                } else {
-                    GS::ObjectState symbolStyleOS;
-                    TextLabelDetails::AddLabelSymbolStyleDetails (symbolStyleOS, elem.label);
-                    typeSpecificDetails.Add ("symbolStyle", symbolStyleOS);
-                }
-                break;
-            }
-
-            case API_TextID: {
-                // The flat fields are the ones SetDetailsOfElements takes back (position, angle, height,
-                // justification) and the Grasshopper TextDetails type reads; "style" carries the full
-                // style state and AddTextContent adds "text", "paragraphCount" and the styled "runs".
-                typeSpecificDetails.Add ("position", Create2DCoordinateObjectState (elem.text.loc));
-                typeSpecificDetails.Add ("angle", elem.text.angle);
-                typeSpecificDetails.Add ("height", elem.text.size);
-                typeSpecificDetails.Add ("pen", (Int32) elem.text.pen);
-                typeSpecificDetails.Add ("justification", JustificationToString (static_cast<API_JustID> (elem.text.just)));
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
-                GS::ObjectState styleOS;
-                TextLabelDetails::AddTextStyleDetails (styleOS, elem.text, true);
-                typeSpecificDetails.Add ("style", styleOS);
-                if (TextLabelDetails::AddTextContent (typeSpecificDetails, elem.header.guid) != NoError) {
-                    // The fields are required by the schema; an unreadable memo reads as empty content.
-                    typeSpecificDetails.Add ("text", GS::EmptyUniString);
-                    typeSpecificDetails.Add ("paragraphCount", 0);
-                }
-                break;
-            }
-
-            case API_LevelDimensionID: {
-                // "level" is the value the dimension shows: the parent's height at "position"
-                // for an associative one, the floor level or the static value otherwise.
-                typeSpecificDetails.Add ("position", Create2DCoordinateObjectState (elem.levelDimension.loc));
-                typeSpecificDetails.Add ("level", elem.levelDimension.level);
-                typeSpecificDetails.Add ("staticLevel", elem.levelDimension.staticLevel);
-                const API_ElemTypeID parentTypeId = GetElemTypeId (elem.levelDimension.parentType);
-                if (parentTypeId != API_ZombieElemID && elem.levelDimension.parentGuid != APINULLGuid) {
-                    typeSpecificDetails.Add ("ownerElementId", CreateGuidObjectState (elem.levelDimension.parentGuid));
-                    typeSpecificDetails.Add ("ownerElementType", GetElementTypeNonLocalizedName (parentTypeId));
-                }
-                typeSpecificDetails.Add ("dimForm", (Int32) elem.levelDimension.dimForm);
-                typeSpecificDetails.Add ("needPlus", elem.levelDimension.needPlus);
-                typeSpecificDetails.Add ("pen", (Int32) elem.levelDimension.pen);
-                typeSpecificDetails.Add ("textHeight", elem.levelDimension.note1.noteSize);
-                typeSpecificDetails.Add ("textPen", (Int32) elem.levelDimension.note1.notePen);
-                typeSpecificDetails.Add ("markerSize", elem.levelDimension.markerSize);
-                typeSpecificDetails.Add ("angle", elem.levelDimension.angle);
-                typeSpecificDetails.Add ("origin", DimensionOriginToString (elem.levelDimension.origin));
-                break;
-            }
-
-            case API_ObjectID:
-            case API_LampID:
-                AddObjectLampDetails (typeSpecificDetails, elem, stories);
-                break;
-
-            case API_DetailID:
-            case API_WorksheetID: {
-                typeSpecificDetails.Add ("basePoint", Create2DCoordinateObjectState (elem.detail.pos));
-                typeSpecificDetails.Add ("angle", elem.detail.angle);
-                typeSpecificDetails.Add ("markerId", CreateGuidObjectState (elem.detail.markId));
-                typeSpecificDetails.Add ("detailName", GS::UniString (elem.detail.detailName));
-                typeSpecificDetails.Add ("detailIdStr", GS::UniString (elem.detail.detailIdStr));
-                typeSpecificDetails.Add ("isHorizontalMarker", elem.detail.horizontalMarker);
-                typeSpecificDetails.Add ("isWindowOpened", elem.detail.windOpened);
-                AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "clipPolygon");
-                GS::ObjectState linkDataOS;
-                switch (elem.detail.linkData.referringLevel) {
-                    case API_ReferringLevel::ReferredToView:
-                        linkDataOS.Add ("referredView", CreateGuidObjectState (elem.detail.linkData.referredView));
-                        break;
-                    case API_ReferringLevel::ReferredToDrawing:
-                        linkDataOS.Add ("referredDrawing", CreateGuidObjectState (elem.detail.linkData.referredDrawing));
-                        break;
-                    case API_ReferringLevel::ReferredToViewPoint:
-                        linkDataOS.Add ("referredPMViewPoint", CreateGuidObjectState (elem.detail.linkData.referredPMViewPoint));
-                        break;
-                    default:
-                        break;
-                }
-                typeSpecificDetails.Add ("linkData", linkDataOS);
-            } break;
-
-            case API_PolyLineID: {
-                AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "coordinates", "arcs");
-                AddLineFamilySettingsDetails (typeSpecificDetails, elem.polyLine.linePen, elem.polyLine.ltypeInd, elem.polyLine.roomSeparator);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
-            } break;
-
-            case API_HatchID: {
-                AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "coordinates", "arcs", "holes", "polygonOutline", "polygonArcs");
-                typeSpecificDetails.Add ("contourPenIndex", elem.hatch.contPen.penIndex);
-                typeSpecificDetails.Add ("fillPenIndex", elem.hatch.fillPen.penIndex);
-                typeSpecificDetails.Add ("fillBackgroundPenIndex", elem.hatch.fillBGPen);
-                // The RGB colors are only reported when they override the pens, so their absence means the pens are in effect.
-                if ((elem.hatch.hatchFlags & APIHatch_HasFgRGBColor) != 0) {
-                    typeSpecificDetails.Add ("foregroundColor", CreateColorObjectState (elem.hatch.foregroundRGB));
-                }
-                if ((elem.hatch.hatchFlags & APIHatch_HasBkgRGBColor) != 0) {
-                    typeSpecificDetails.Add ("backgroundColor", CreateColorObjectState (elem.hatch.backgroundRGB));
-                }
-                typeSpecificDetails.Add ("fillId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_FilltypeID, elem.hatch.fillInd)));
-                typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, elem.hatch.buildingMaterial)));
-                typeSpecificDetails.Add ("roomSpecial", (Int32) elem.hatch.roomSpecial);
-                typeSpecificDetails.Add ("showArea", elem.hatch.showArea);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
-            } break;
-
-            case API_LineID: {
-                typeSpecificDetails.Add ("begCoordinate", Create2DCoordinateObjectState (elem.line.begC));
-                typeSpecificDetails.Add ("endCoordinate", Create2DCoordinateObjectState (elem.line.endC));
-                AddLineFamilySettingsDetails (typeSpecificDetails, elem.line.linePen, elem.line.ltypeInd, elem.line.roomSeparator);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
-            } break;
-
-            case API_ArcID:
-            case API_CircleID: {
-                typeSpecificDetails.Add ("origin", Create2DCoordinateObjectState (elem.arc.origC));
-                typeSpecificDetails.Add ("radius", elem.arc.r);
-                typeSpecificDetails.Add ("angle", elem.arc.angle);
-                typeSpecificDetails.Add ("ratio", elem.arc.ratio);
-                if (typeID == API_ArcID) {
-                    typeSpecificDetails.Add ("begAngle", elem.arc.begAng);
-                    typeSpecificDetails.Add ("endAngle", elem.arc.endAng);
-                }
-                typeSpecificDetails.Add ("reflected", elem.arc.reflected);
-                typeSpecificDetails.Add ("isWhole", elem.arc.whole);
-                AddLineFamilySettingsDetails (typeSpecificDetails, elem.arc.linePen, elem.arc.ltypeInd, elem.arc.roomSeparator);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
-            } break;
-
-            case API_HotspotID: {
-                typeSpecificDetails.Add ("position", Create2DCoordinateObjectState (elem.hotspot.pos));
-                typeSpecificDetails.Add ("height", elem.hotspot.height);
-                typeSpecificDetails.Add ("penIndex", elem.hotspot.pen);
-            } break;
-
-            case API_SplineID: {
-                // Spline has no poly/nCoords summary field (unlike Line/PolyLine/Hatch) - the
-                // point count is implicit in the coords memo handle's byte size. Index 0 is a
-                // real point here (not a dummy sentinel), and no closing duplicate is stored even
-                // when closed=true (per the ACAPI_SplineType reference docs).
-                API_ElementMemo splineMemo = {};
-                if (ACAPI_Element_GetMemo (elem.header.guid, &splineMemo, APIMemoMask_Polygon) == NoError && splineMemo.coords != nullptr) {
-                    const Int32 nPoints = BMGetHandleSize (reinterpret_cast<GSHandle> (splineMemo.coords)) / sizeof (API_Coord);
-                    const auto& coords = typeSpecificDetails.AddList<GS::ObjectState> ("coordinates");
-                    for (Int32 i = 0; i < nPoints; ++i) {
-                        coords (Create2DCoordinateObjectState ((*splineMemo.coords)[i]));
-                    }
-                    // The handles, in the format ModifySplines takes them, when the curve has its own.
-                    if (!elem.spline.autoSmooth && splineMemo.bezierDirs != nullptr &&
-                        BMGetHandleSize (reinterpret_cast<GSHandle> (splineMemo.bezierDirs)) / (GSSize) sizeof (API_SplineDir) >= nPoints) {
-                        const auto& dirs = typeSpecificDetails.AddList<GS::ObjectState> ("bezierDirections");
-                        for (Int32 i = 0; i < nPoints; ++i) {
-                            const API_SplineDir& dir = (*splineMemo.bezierDirs)[i];
-                            GS::ObjectState dirOS;
-                            dirOS.Add ("lenPrev", dir.lenPrev);
-                            dirOS.Add ("lenNext", dir.lenNext);
-                            dirOS.Add ("dirAng", dir.dirAng);
-                            dirs (dirOS);
-                        }
-                    }
-                }
-                ACAPI_DisposeElemMemoHdls (&splineMemo);
-                typeSpecificDetails.Add ("autoSmooth", elem.spline.autoSmooth);
-                typeSpecificDetails.Add ("closed", elem.spline.closed);
-                AddLineFamilySettingsDetails (typeSpecificDetails, elem.spline.linePen, elem.spline.ltypeInd, elem.spline.roomSeparator);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, 0, stories));
-                ElementDetailsReaders::AddSplineBezierDirections (elem, typeSpecificDetails);
-            } break;
-
-            case API_RailingID: {
-                typeSpecificDetails.Add ("bottomOffset", elem.railing.bottomOffset);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, elem.railing.bottomOffset, stories));
-                typeSpecificDetails.Add ("height", elem.railing.defSegment.height);
-                AddRailingReferenceLineAndSegments (elem, typeSpecificDetails);
-            } break;
-
-            case API_CurtainWallID: {
-                typeSpecificDetails.Add ("height", elem.curtainWall.height);
-                double actualHeight = 0.0;
-                if (ACAPI_CurtainWall_GetCWHeight (&elem.header.guid, &actualHeight) == NoError) {
-                    typeSpecificDetails.Add ("actualHeight", actualHeight);
-                }
-                typeSpecificDetails.Add ("angle", elem.curtainWall.angle);
-                typeSpecificDetails.Add ("flipped", elem.curtainWall.flipped);
-            } break;
-
-            case API_CurtainWallSegmentID: {
-                typeSpecificDetails.Add ("begCoordinate", Create3DCoordinateObjectState (elem.cwSegment.begC));
-                typeSpecificDetails.Add ("endCoordinate", Create3DCoordinateObjectState (elem.cwSegment.endC));
-                typeSpecificDetails.Add ("extrusionVector", Create3DCoordinateObjectState (elem.cwSegment.extrusion));
-                typeSpecificDetails.Add ("gridOrigin", Create3DCoordinateObjectState (elem.cwSegment.gridOrigin));
-                typeSpecificDetails.Add ("gridAngle", elem.cwSegment.gridAngle);
-                if (elem.cwSegment.segmentType == API_CWSegmentTypeID::APICWSeT_Arc) {
-                    typeSpecificDetails.Add ("arcOrigin", Create3DCoordinateObjectState (elem.cwSegment.arcOrigin));
-                    typeSpecificDetails.Add ("isNegativeArc", elem.cwSegment.negArc);
-                }
-            } break;
-
-            case API_CurtainWallPanelID: {
-                API_Element ownerCW = {};
-                ownerCW.header.guid = elem.cwPanel.owner;
-
-                API_ElementMemo cwMemo = {};
-                const GS::OnExit cwMemoGuard ([&cwMemo] () { ACAPI_DisposeElemMemoHdls (&cwMemo); });
-                const bool hasOwnerMemo = ACAPI_Element_Get (&ownerCW) == NoError &&
-                    ACAPI_Element_GetMemo (ownerCW.header.guid, &cwMemo, APIMemoMask_CWallSegments | APIMemoMask_CWallFrames) == NoError &&
-                    cwMemo.cWallSegments != nullptr && elem.cwPanel.segmentID < ownerCW.curtainWall.nSegments &&
-                    (cwMemo.cWallFrames != nullptr || ownerCW.curtainWall.nFrames == 0);
-
-                // The frames of the panel are found through the grid mesh of its segment; without
-                // any of these memo parts the panel is reported without its polygon and frames.
-                API_ElementMemo cwSegmentMemo = {};
-                const GS::OnExit cwSegmentMemoGuard ([&cwSegmentMemo] () { ACAPI_DisposeElemMemoHdls (&cwSegmentMemo); });
-                API_ElementMemo cwPanelMemo = {};
-                const GS::OnExit cwPanelMemoGuard ([&cwPanelMemo] () { ACAPI_DisposeElemMemoHdls (&cwPanelMemo); });
-                const bool hasPanelGrid = hasOwnerMemo &&
-                    ACAPI_Element_GetMemo (cwMemo.cWallSegments[elem.cwPanel.segmentID].head.guid, &cwSegmentMemo, APIMemoMask_CWSegGridMesh) == NoError &&
-                    cwSegmentMemo.cWSegGridMesh != nullptr &&
-                    ACAPI_Element_GetMemo (elem.header.guid, &cwPanelMemo, APIMemoMask_CWallPanels) == NoError &&
-                    cwPanelMemo.cWallPanelGridIDTable != nullptr && cwPanelMemo.cWallPanelGridIDTable->ContainsKey (elem.header.guid);
-
-                std::vector<const API_CWFrameType*> framePtrs;
-                if (hasPanelGrid) {
-                    const API_GridMesh& ownerGridMesh = *cwSegmentMemo.cWSegGridMesh;
-                    const GS::Array<API_GridElemID>& gridIDs = (*cwPanelMemo.cWallPanelGridIDTable)[elem.header.guid];
-                    GS::Array<API_GridElemID> gridMeshPolygonIDs = gridIDs;
-                    for (const API_GridElemID& polygonID : gridIDs) {
-                        const API_GridMeshPolygon* gridMeshPolygon = ownerGridMesh.meshPolygons.GetPtr (polygonID);
-                        if (gridMeshPolygon == nullptr) {
-                            continue;
-                        }
-                        gridMeshPolygonIDs.Append (gridMeshPolygon->neighbourIDs[API_GridMeshDirection::API_GridMeshRight]);
-                        gridMeshPolygonIDs.Append (gridMeshPolygon->neighbourIDs[API_GridMeshDirection::API_GridMeshUpper]);
-                    }
-
-                    const std::vector<API_Coord> panelSurfaceCoords = GetCWPanelSurfaceCoords (elem.header.guid);
-
-                    std::vector<const API_CWFrameType*> cornerFramesOfNextSegment;
-                    for (UIndex i = 0; i < ownerCW.curtainWall.nFrames; ++i) {
-                        const API_CWFrameType& frame = cwMemo.cWallFrames[i];
-                        if (frame.segmentID == elem.cwPanel.segmentID) {
-                            if (gridMeshPolygonIDs.Contains (frame.cellID) && ownerGridMesh.meshPolygons.ContainsKey (frame.cellID)) {
-                                for (size_t iCoord = 0; iCoord + 1 < panelSurfaceCoords.size (); ++iCoord) {
-                                    const API_Coord& c1 = panelSurfaceCoords[iCoord];
-                                    const API_Coord& c2 = panelSurfaceCoords[iCoord + 1];
-                                    auto frameSurfaceCoords = GetFrameSurfaceParamCoords (frame, ownerGridMesh);
-
-                                    if ((IsSame2DCoordinate (frameSurfaceCoords.first, c1) && IsSame2DCoordinate (frameSurfaceCoords.second, c2)) ||
-                                        (IsSame2DCoordinate (frameSurfaceCoords.first, c2) && IsSame2DCoordinate (frameSurfaceCoords.second, c1))) {
-                                        framePtrs.push_back (&frame);
-                                        break;
-                                    }
-                                }
-                                if (framePtrs.size () >= elem.cwPanel.edgesNum) {
-                                    break;
-                                }
-                            }
-                        } else if (frame.classID == APICWFrameClass_Corner && frame.segmentID == elem.cwPanel.segmentID + 1) {
-                            cornerFramesOfNextSegment.push_back (&frame);
-                        }
-                    }
-                    if (framePtrs.size () < elem.cwPanel.edgesNum) {
-                        framePtrs.insert (framePtrs.end (), cornerFramesOfNextSegment.begin (), cornerFramesOfNextSegment.end ());
-                    }
-                }
-
-                const auto& polygonCoordinates = typeSpecificDetails.AddList<GS::ObjectState> ("polygonCoordinates");
-                const auto& frames = typeSpecificDetails.AddList<GS::ObjectState> ("frames");
-                if (!framePtrs.empty ()) {
-                    std::vector<API_Coord3D> polygonCoords = { framePtrs[0]->begC, framePtrs[0]->endC };
-                    frames (CreateElementIdObjectState (framePtrs[0]->head.guid));
-                    framePtrs.erase (framePtrs.begin ());
-                    while (polygonCoords.size() != (elem.cwPanel.edgesNum + 1) && !framePtrs.empty ()) {
-                        auto* framePtr = FindNextFrameOfPanel (framePtrs, polygonCoords);
-                        if (framePtr == nullptr) {
-                            break;
-                        }
-                        frames (CreateElementIdObjectState (framePtr->head.guid));
-                    }
-                    for (const auto& c : polygonCoords) {
-                        polygonCoordinates (Create3DCoordinateObjectState (c));
-                    }
-                }
-                typeSpecificDetails.Add ("isHidden", elem.cwPanel.hidden);
-                bool isDegenerate = false;
-                if (ACAPI_CurtainWall_IsCWPanelDegenerate (&elem.header.guid, &isDegenerate) == NoError) {
-                    typeSpecificDetails.Add ("isDegenerate", isDegenerate);
-                }
-                typeSpecificDetails.Add ("segmentIndex", elem.cwPanel.segmentID);
-                typeSpecificDetails.Add ("className", GS::UniString (elem.cwPanel.className));
-            } break;
-
-            case API_CurtainWallFrameID: {
-                typeSpecificDetails.Add ("begCoordinate", Create3DCoordinateObjectState (elem.cwFrame.begC));
-                typeSpecificDetails.Add ("endCoordinate", Create3DCoordinateObjectState (elem.cwFrame.endC));
-                typeSpecificDetails.Add ("orientationVector", Create3DCoordinateObjectState (elem.cwFrame.orientation));
-                typeSpecificDetails.Add ("panelConnectionHole", GS::ObjectState ("d", elem.cwFrame.d, "w", elem.cwFrame.w));
-                typeSpecificDetails.Add ("frameContour", GS::ObjectState ("a1", elem.cwFrame.a1, "a2", elem.cwFrame.a2, "b1", elem.cwFrame.b1, "b2", elem.cwFrame.b2));
-                typeSpecificDetails.Add ("segmentIndex", elem.cwFrame.segmentID);
-                typeSpecificDetails.Add ("className", GS::UniString (elem.cwFrame.className));
-                typeSpecificDetails.Add ("type",
-                    elem.cwFrame.classID == APICWFrameClass_Merged ? "Deleted" :
-                    elem.cwFrame.classID == APICWFrameClass_Boundary ? "Boundary" :
-                    elem.cwFrame.classID == APICWFrameClass_Corner ? "Corner" :
-                    elem.cwFrame.classID == APICWFrameClass_Division ? "Division" : "Custom");
-            } break;
-
-            case API_MeshID: {
-                typeSpecificDetails.Add ("level", elem.mesh.level);
-                if (elem.mesh.skirt == 3) {
-                    typeSpecificDetails.Add ("skirtType", "SurfaceOnlyWithoutSkirt");
-                } else if (elem.mesh.skirt == 2) {
-                    typeSpecificDetails.Add ("skirtType", "WithSkirt");
-                } else {
-                    typeSpecificDetails.Add ("skirtType", "SolidBodyWithSkirt");
-                }
-                typeSpecificDetails.Add ("skirtLevel", elem.mesh.skirtLevel);
-                if (elem.mesh.smoothRidges == APIRidge_AllSharp) {
-                    typeSpecificDetails.Add ("ridges", GS::UniString ("AllSharp"));
-                } else if (elem.mesh.smoothRidges == APIRidge_AllSmooth) {
-                    typeSpecificDetails.Add ("ridges", GS::UniString ("AllSmooth"));
-                } else {
-                    typeSpecificDetails.Add ("ridges", GS::UniString ("UserDefined"));
-                }
-                typeSpecificDetails.Add ("showLines",    elem.mesh.showLines != 0);
-                typeSpecificDetails.Add ("contourPen",   (Int32)elem.mesh.contPen);
-                typeSpecificDetails.Add ("levelPen",     (Int32)elem.mesh.levelPen);
-                typeSpecificDetails.Add ("lineTypeIndex", GetAttributeIndex (elem.mesh.ltypeInd));
-                constexpr bool includeZCoords = true;
-                AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonCoordinates", "polygonArcs", "holes", "polygonCoordinates", "polygonArcs", includeZCoords);
-                if (elem.mesh.levelLines.nSubLines > 0) {
-                    API_ElementMemo memo = {};
-                    const GS::OnExit guard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
-                    if (ACAPI_Element_GetMemo (elem.header.guid, &memo, APIMemoMask_MeshLevel) == NoError && memo.meshLevelCoords != nullptr && memo.meshLevelEnds != nullptr) {
-                        const auto& sublines = typeSpecificDetails.AddList<GS::ObjectState> ("sublines");
-                        const GSSize nSublines = BMhGetSize (reinterpret_cast<GSHandle> (memo.meshLevelEnds)) / sizeof (Int32);
-                        const GSSize nLevelCoords = BMhGetSize (reinterpret_cast<GSHandle> (memo.meshLevelCoords)) / sizeof (API_MeshLevelCoord);
-                        Int32 iCoord = 0;
-                        for (Int32 i = 0; i < nSublines; ++i) {
-                            GS::ObjectState subline;
-                            const auto& coordinates = subline.AddList<GS::ObjectState> ("coordinates");
-
-                            const Int32 nCoords = static_cast<Int32> (std::min<GSSize> ((*memo.meshLevelEnds)[i], nLevelCoords));
-                            for (; iCoord < nCoords; ++iCoord) {
-                                const API_MeshLevelCoord& coord = (*memo.meshLevelCoords)[iCoord];
-                                coordinates (Create3DCoordinateObjectState (coord.c));
-                            }
-                            sublines (subline);
-                        }
-                    }
-                }
-            } break;
-
-            case API_DrawingID: {
-                typeSpecificDetails.Add ("pos",           Create2DCoordinateObjectState (elem.drawing.pos));
-                typeSpecificDetails.Add ("angle",         elem.drawing.angle);
-                typeSpecificDetails.Add ("ratio",         elem.drawing.ratio);
-                typeSpecificDetails.Add ("drawingScale",  elem.drawing.drawingScale);
-                typeSpecificDetails.Add ("modelOffset",   Create2DCoordinateObjectState (elem.drawing.modelOffset));
-                typeSpecificDetails.Add ("isCutWithFrame", elem.drawing.isCutWithFrame);
-                // Not the source view: once the Drawing exists Archicad reports its own link id
-                // here, which navigator commands do not accept (#1480).
-                typeSpecificDetails.Add ("navigatorItemId", CreateGuidObjectState (elem.drawing.drawingGuid));
-                typeSpecificDetails.Add ("bounds", GS::ObjectState (
-                    "xMin", elem.drawing.bounds.xMin,
-                    "yMin", elem.drawing.bounds.yMin,
-                    "xMax", elem.drawing.bounds.xMax,
-                    "yMax", elem.drawing.bounds.yMax));
-                if (elem.drawing.isCutWithFrame) {
-                    AddPolygonFromMemoCoords (elem.header.guid, typeSpecificDetails, "clipPolygon");
-                }
-                typeSpecificDetails.Add ("nameType",      DrawingNameTypeToString (elem.drawing.nameType));
-                if (elem.drawing.nameType == APIName_CustomName) {
-                    typeSpecificDetails.Add ("customName", GS::UniString (elem.drawing.name));
-                }
-                typeSpecificDetails.Add ("numberingType",  DrawingNumberingTypeToString (elem.drawing.numberingType));
-                if (elem.drawing.numberingType == APINumbering_CustomNum) {
-                    typeSpecificDetails.Add ("customNumber", GS::UniString (elem.drawing.customNumber));
-                }
-                typeSpecificDetails.Add ("isInNumbering", elem.drawing.isInNumbering);
-                typeSpecificDetails.Add ("hasBorderLine",       elem.drawing.hasBorderLine);
-                typeSpecificDetails.Add ("borderLineTypeIndex", GetAttributeIndex (elem.drawing.borderLineType));
-                typeSpecificDetails.Add ("borderPenIndex",      (Int32)elem.drawing.borderPen);
-                typeSpecificDetails.Add ("borderSize",          elem.drawing.borderSize);
-                // Library part index of the title (API_DrawingTitle::libInd) - a negative/invalid
-                // index here means no title object is instantiated at all (nothing to show); setting
-                // it to a valid index (e.g. copied from another drawing) is what makes Archicad
-                // create the title's own placed element.
-                typeSpecificDetails.Add ("titleLibraryPartIndex", elem.drawing.title.libInd);
-                if (elem.drawing.title.guid != APINULLGuid) {
-                    // The drawing title is itself a placed, GDL-parameterized library part
-                    // element (API_DrawingTitle::guid, "object based elements from Archicad 10")
-                    // - its own settings (font/pen/size aside) are reachable like any other
-                    // element via this id, e.g. with Get/SetGDLParametersOfElements.
-                    typeSpecificDetails.Add ("titleElementId", CreateGuidObjectState (elem.drawing.title.guid));
-                }
-            } break;
-
-            case API_MorphID:
-                AddMorphBodyFromMemo (elem, typeSpecificDetails);
-                break;
-
-            case API_RoofID: {
-                const API_ShellBaseType& base = elem.roof.shellBase;
-                typeSpecificDetails.Add ("roofClass", elem.roof.roofClass == API_PolyRoofID ? "MultiPlane" : "SinglePlane");
-                typeSpecificDetails.Add ("structureType", StructureTypeToString (base.modelElemStructureType));
-                typeSpecificDetails.Add ("thickness", base.thickness);
-                typeSpecificDetails.Add ("level", base.level);
-                typeSpecificDetails.Add ("zCoordinate", GetZPos (elem.header.floorInd, base.level, stories));
-                if (StructureTypeToString (base.modelElemStructureType) == "Composite") {
-                    typeSpecificDetails.Add ("compositeId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_CompWallID, base.composite)));
-                } else {
-                    typeSpecificDetails.Add ("buildingMaterialId", CreateGuidObjectState (GetAttributeGuidFromIndex (API_BuildingMaterialID, base.buildingMaterial)));
-                }
-                AddShellBaseSurfaces (base, typeSpecificDetails);
-                if (elem.roof.roofClass == API_PlaneRoofID) {
-                    typeSpecificDetails.Add ("angle", elem.roof.u.planeRoof.angle);
-                    GS::ObjectState pivotLine;
-                    pivotLine.Add ("begin", Create2DCoordinateObjectState (elem.roof.u.planeRoof.baseLine.c1));
-                    pivotLine.Add ("end", Create2DCoordinateObjectState (elem.roof.u.planeRoof.baseLine.c2));
-                    typeSpecificDetails.Add ("pivotLine", pivotLine);
-                } else {
-                    typeSpecificDetails.Add ("eavesOverhang", elem.roof.u.polyRoof.eavesOverHang);
-                    const auto& levels = typeSpecificDetails.AddList<GS::ObjectState> ("levels");
-                    for (short i = 0; i < elem.roof.u.polyRoof.levelNum && i < 16; ++i) {
-                        GS::ObjectState level;
-                        level.Add ("height", elem.roof.u.polyRoof.levelData[i].levelHeight);
-                        level.Add ("angle", elem.roof.u.polyRoof.levelData[i].levelAngle);
-                        levels (level);
-                    }
-                    AddPivotPolygonFromMemo (elem.header.guid, typeSpecificDetails);
-                }
-                // the roof's own polygon: the plane roof's outline, the multi-plane roof's contour
-                AddPolygonWithHolesFromMemoCoords (elem.header.guid, typeSpecificDetails, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
-                AddEdgeSideMaterialsFromMemo (elem.header.guid, typeSpecificDetails);
-            } break;
-
-            case API_HotlinkID: {
-                API_Coord3D origin;
-                double rotationAngle;
-                bool mirrored;
-                DecomposeHotlinkTransformation (elem.hotlink.transformation, origin, rotationAngle, mirrored);
-                typeSpecificDetails.Add ("hotlinkType", elem.hotlink.type == APIHotlink_XRef ? "XRef" : "Module");
-                typeSpecificDetails.Add ("hotlinkNodeId", CreateGuidObjectState (elem.hotlink.hotlinkNodeGuid));
-                typeSpecificDetails.Add ("origin", Create3DCoordinateObjectState (origin));
-                typeSpecificDetails.Add ("rotationAngle", rotationAngle);
-                typeSpecificDetails.Add ("mirrored", mirrored);
-                typeSpecificDetails.Add ("floorDifference", elem.hotlink.floorDifference);
-                typeSpecificDetails.Add ("skipNested", elem.hotlink.skipNested);
-                typeSpecificDetails.Add ("suspendFixAngle", elem.hotlink.suspendFixAngle);
-                typeSpecificDetails.Add ("ignoreTopFloorLinks", elem.hotlink.ignoreTopFloorLinks);
-                typeSpecificDetails.Add ("relinkWallOpenings", elem.hotlink.relinkWallOpenings);
-                typeSpecificDetails.Add ("adjustLevelDiffs", elem.hotlink.adjustLevelDiffs);
-            } break;
-
-            case API_StairID: {
-                // The fields CreateStairs writes, read back (#823). The finishes and the
-                // structure are modeled by the Stair's subelements (risers, treads and
-                // structures, see GetSubelementsOfHierarchicalElements), not by the Stair
-                // element itself. On a placed stair basePlane.basePoint is in model
-                // coordinates: its z is the absolute elevation of the base, not the offset
-                // from the home story CreateStairs writes (a stair created on the 6.4 story
-                // reads 6.4, and read 12.8 as zCoordinate when the story level was added
-                // again, #1561), and its x and y are the origin of the baseline's coords.
-                const API_Coord3D& basePoint = elem.stair.basePlane.basePoint;
-                typeSpecificDetails.Add ("stepNum", static_cast<Int32> (elem.stair.stepNum));
-                typeSpecificDetails.Add ("riserHeight", elem.stair.riserHeight);
-                typeSpecificDetails.Add ("treadDepth", elem.stair.treadDepth);
-                typeSpecificDetails.Add ("flightWidth", elem.stair.flightWidth);
-                typeSpecificDetails.Add ("totalHeight", elem.stair.totalHeight);
-                typeSpecificDetails.Add ("level", basePoint.z - GetZPos (elem.header.floorInd, 0.0, stories));
-                typeSpecificDetails.Add ("zCoordinate", basePoint.z);
-                typeSpecificDetails.Add ("finishVisible", elem.stair.finishVisible);
-                AddStairBaseLineFromMemo (elem.header.guid, { basePoint.x, basePoint.y }, typeSpecificDetails);
-            } break;
-
-            case API_CutPlaneID: {
-                // The fields CreateSections writes, read back (#1607).
-                typeSpecificDetails.Add ("name", GS::UniString (elem.cutPlane.segment.cutPlName));
-                typeSpecificDetails.Add ("idStr", GS::UniString (elem.cutPlane.segment.cutPlIdStr));
-                AddSectionLinesFromMemo (elem.header.guid, static_cast<GSSize> (elem.cutPlane.segment.nMainCoord), static_cast<GSSize> (elem.cutPlane.segment.nDepthCoord), typeSpecificDetails);
-            } break;
-
-            case API_SkylightID:
-                AddLibPartBasedElementDetails (typeSpecificDetails, elem.skylight.openingBase.libInd, elem.skylight.owner);
-                ElementDetailsReaders::AddSkylightDetails (elem, stories, typeSpecificDetails);
-                break;
-
-            case API_CameraID:
-                ElementDetailsReaders::AddCameraDetails (elem, typeSpecificDetails);
-                break;
-
-            case API_CamSetID:
-                ElementDetailsReaders::AddCameraSetDetails (elem, typeSpecificDetails);
-                break;
-
-            case API_ChangeMarkerID:
-                ElementDetailsReaders::AddChangeMarkerDetails (elem, typeSpecificDetails);
-                break;
-
-            case API_PictureID:
-                ElementDetailsReaders::AddPictureDetails (elem, typeSpecificDetails);
-                break;
-
-            default:
-                typeSpecificDetails.Add ("error", "Not yet supported element type");
-                break;
+        if (typeID == API_ShellID) {
+            // As CreateShells reads them: the geometry method is given, Archicad answers with the
+            // tool's own when it differs.
+            element.shell.shellClass = API_ExtrudedShellID;
         }
-
-        detailsOfElement.Add ("details", typeSpecificDetails);
-        if (isFieldRequested ("floorPlanPolygons") && CanHaveFloorPlanCutFill (typeID)) {
-            AddFloorPlanPolygonsIfAvailable (elem.header.guid, detailsOfElement);
+        const GSErrCode err = ACAPI_Element_GetDefaults (&element, &memo);
+        if (err != NoError) {
+            defaults (CreateErrorResponse (err, "Failed to read the defaults of " + typeName + "."));
+            continue;
         }
-
-        detailsOfElements (detailsOfElement);
+        defaults (ElementDetailsObjectState (element, stories, isFieldRequested));
     }
 
     return response;
@@ -6276,6 +6465,415 @@ GS::ObjectState MirrorElementsCommand::Execute (const GS::ObjectState& parameter
             } else {
                 executionResults (CreateSuccessfulExecutionResult ());
             }
+        }
+
+        return NoError;
+    });
+
+    return response;
+}
+
+StretchElementsCommand::StretchElementsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String StretchElementsCommand::GetName () const
+{
+    return "StretchElements";
+}
+
+GS::Optional<GS::UniString> StretchElementsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "elements": {
+                "$ref": "#/Elements",
+                "description": "The elements to stretch."
+            },
+            "polygon": {
+                "type": "array",
+                "description": "The stretch area on the floor plan, like the marquee of the Stretch command: the nodes of the elements inside it (or on its boundary) move. A last vertex equal to the first is ignored.",
+                "items": {
+                    "$ref": "#/Coordinate2D"
+                },
+                "minItems": 3
+            },
+            "vector": {
+                "type": "object",
+                "description": "The displacement of the nodes inside the polygon. z (default 0) is the vertical part of the edit vector, passed on to Archicad; the vertices of polygon elements move only horizontally.",
+                "properties": {
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "z": { "type": "number" }
+                },
+                "additionalProperties": false,
+                "required": ["x", "y"]
+            }
+        },
+        "additionalProperties": false,
+        "required": ["elements", "polygon", "vector"]
+    })";
+}
+
+GS::Optional<GS::UniString> StretchElementsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "executionResults": {
+                "$ref": "#/ExecutionResults"
+            }
+        },
+        "additionalProperties": false,
+        "required": [
+            "executionResults"
+        ]
+    })";
+}
+
+// Inside or on the boundary of the polygon (vertices listed once).
+static bool IsInsideOrOnPolygon (const API_Coord& p, const GS::Array<API_Coord>& polygon)
+{
+    constexpr double Eps = 1e-6;
+    const USize n = polygon.GetSize ();
+    bool inside = false;
+    for (USize i = 0, j = n - 1; i < n; j = i++) {
+        const API_Coord& a = polygon[i];
+        const API_Coord& b = polygon[j];
+        const double abx = b.x - a.x;
+        const double aby = b.y - a.y;
+        const double apx = p.x - a.x;
+        const double apy = p.y - a.y;
+        const double lengthSquared = abx * abx + aby * aby;
+        const double cross = abx * apy - aby * apx;
+        const double dot = abx * apx + aby * apy;
+        if (std::fabs (cross) <= Eps * std::sqrt (lengthSquared) && dot >= -Eps && dot <= lengthSquared + Eps) {
+            return true;
+        }
+        if ((a.y > p.y) != (b.y > p.y)) {
+            const double xCross = a.x + (p.y - a.y) * abx / aby;
+            if (p.x < xCross) {
+                inside = !inside;
+            }
+        }
+    }
+    return inside;
+}
+
+// The neig type of an element's own nodes: the vertices of a polygon, the ends of a reference line.
+// Other hotspots of the element (edges, polygon sides of a wall, stamps, labels) are not nodes.
+static API_NeigID GetNodeNeigID (const API_Elem_Head& header)
+{
+    API_NeigID neigID = APINeig_None;
+#ifdef ServerMainVers_2700
+    if (ACAPI_Element_ElemTypeToNeigID (header.type, neigID) != NoError) {
+        return APINeig_None;
+    }
+#else
+    UNUSED_PARAMETER (header);
+#endif
+    return neigID;
+}
+
+// True when a node that was inside the stretch polygon is no longer where it was before the edit.
+// The nodes are compared by position: an edit may renumber them.
+static bool HaveNodesMoved (const API_Guid& elemGuid, const GS::Array<API_ElementHotspot>& nodesBefore)
+{
+    GS::Array<API_ElementHotspot> hotspots;
+    if (ACAPI_Element_GetHotspots (elemGuid, &hotspots) != NoError) {
+        return true;
+    }
+    for (const API_ElementHotspot& before : nodesBefore) {
+        bool stillThere = false;
+        for (const API_ElementHotspot& after : hotspots) {
+            if (after.first.neigID == before.first.neigID &&
+                std::fabs (after.second.x - before.second.x) < 1e-7 && std::fabs (after.second.y - before.second.y) < 1e-7 && std::fabs (after.second.z - before.second.z) < 1e-7) {
+                stillThere = true;
+                break;
+            }
+        }
+        if (!stillThere) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The vertices of the memo polygon (coords, or the pivot polygon of a multi-plane roof) inside the
+// stretch polygon moved in place, and written back with ACAPI_Element_Change, as OffsetEdges does.
+static GS::Optional<GS::ObjectState> StretchMemoPolygonInPlace (API_Element& element, UInt64 memoMask, const GS::Array<API_Coord>& polygon, const API_Coord3D& vector)
+{
+    API_ElementMemo memo = {};
+    const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+    GSErrCode err = ACAPI_Element_GetMemo (element.header.guid, &memo, memoMask);
+    API_Coord** coords = memoMask == APIMemoMask_AdditionalPolygon ? memo.additionalPolyCoords : memo.coords;
+    if (err != NoError || coords == nullptr) {
+        return CreateFailedExecutionResult (err != NoError ? err : APIERR_GENERAL, "Failed to read the polygon of the element.");
+    }
+    const Int32 nCoords = (Int32) (BMGetHandleSize ((GSHandle) coords) / sizeof (API_Coord)) - 1;
+    bool moved = false;
+    for (Int32 i = 1; i <= nCoords; ++i) {
+        if (IsInsideOrOnPolygon ((*coords)[i], polygon)) {
+            (*coords)[i].x += vector.x;
+            (*coords)[i].y += vector.y;
+            moved = true;
+        }
+    }
+    if (!moved) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "No vertex of the element is inside the polygon, so it was not stretched.");
+    }
+    API_Element mask = {};
+    ACAPI_ELEMENT_MASK_CLEAR (mask);
+    err = ACAPI_Element_Change (&element, &mask, &memo, memoMask, true);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to change the polygon of the element.");
+    }
+    return {};
+}
+
+static bool MoveCoordinatesInside (GS::Array<GS::ObjectState>& coordinates, const GS::Array<API_Coord>& polygon, const API_Coord3D& vector)
+{
+    bool moved = false;
+    for (GS::ObjectState& coordinate : coordinates) {
+        const API_Coord c = Get2DCoordinateFromObjectState (coordinate);
+        if (IsInsideOrOnPolygon (c, polygon)) {
+            coordinate = Create2DCoordinateObjectState ({ c.x + vector.x, c.y + vector.y });
+            moved = true;
+        }
+    }
+    return moved;
+}
+
+// Archicad's Stretch through ACAPI_Element_Edit moves the nodes of walls, beams and lines, but
+// reports success and leaves polygon vertices (slabs among them) where they are. For the polygon
+// types the vertices inside the stretch polygon are moved here instead, the polygon written the
+// way the Modify command of the type writes one. handled is false for other types.
+static GS::Optional<GS::ObjectState> StretchPolygonVertices (const API_Guid& elemGuid, const GS::Array<API_Coord>& polygon, const API_Coord3D& vector, bool& handled)
+{
+    handled = false;
+    API_Element element = {};
+    element.header.guid = elemGuid;
+    GSErrCode err = ACAPI_Element_Get (&element);
+    if (err != NoError) {
+        return CreateFailedExecutionResult (err, "Failed to read the element.");
+    }
+    const API_ElemTypeID typeID = GetElemTypeId (element.header);
+    const bool isPlaneRoof = typeID == API_RoofID && element.roof.roofClass == API_PlaneRoofID;
+    if (typeID == API_PolyLineID || typeID == API_MeshID) {
+        handled = true;
+        return StretchMemoPolygonInPlace (element, APIMemoMask_Polygon, polygon, vector);
+    }
+    if (typeID == API_RoofID && element.roof.roofClass == API_PolyRoofID) {
+        // A multi-plane roof is shaped by its pivot polygon; its contour follows it.
+        handled = true;
+        return StretchMemoPolygonInPlace (element, APIMemoMask_AdditionalPolygon, polygon, vector);
+    }
+    if (typeID != API_SlabID && typeID != API_ZoneID && typeID != API_HatchID && !isPlaneRoof) {
+        return {};
+    }
+    handled = true;
+
+    GS::ObjectState geometry;
+    AddPolygonWithHolesFromMemoCoords (elemGuid, geometry, "polygonOutline", "polygonArcs", "holes", "polygonOutline", "polygonArcs");
+    GS::Array<GS::ObjectState> outline;
+    GS::Array<GS::ObjectState> arcs;
+    GS::Array<GS::ObjectState> holes;
+    geometry.Get ("polygonOutline", outline);
+    geometry.Get ("polygonArcs", arcs);
+    geometry.Get ("holes", holes);
+    bool moved = MoveCoordinatesInside (outline, polygon, vector);
+    GS::Array<GS::ObjectState> movedHoles;
+    for (const GS::ObjectState& hole : holes) {
+        GS::Array<GS::ObjectState> holeOutline;
+        GS::Array<GS::ObjectState> holeArcs;
+        hole.Get ("polygonOutline", holeOutline);
+        hole.Get ("polygonArcs", holeArcs);
+        moved = MoveCoordinatesInside (holeOutline, polygon, vector) || moved;
+        GS::ObjectState movedHole;
+        movedHole.Add ("polygonOutline", holeOutline);
+        if (!holeArcs.IsEmpty ()) {
+            movedHole.Add ("polygonArcs", holeArcs);
+        }
+        movedHoles.Push (movedHole);
+    }
+    if (!moved) {
+        return CreateFailedExecutionResult (APIERR_BADPARS, "No vertex of the element is inside the polygon, so it was not stretched.");
+    }
+
+    GS::UniString via;
+    switch (typeID) {
+        case API_ZoneID:
+            return WriteManualZonePolygon (element, outline, arcs, movedHoles, via);
+        case API_RoofID:
+            return WritePlaneRoofPolygon (element, outline, arcs, movedHoles, via);
+        case API_SlabID: {
+            API_ElementMemo memo = {};
+            const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+            ACAPI_Element_GetMemo (elemGuid, &memo);
+            const GS::Optional<GS::UniString> polygonError = ApplySlabPolygonChange (memo, element.slab.sideMat, outline, arcs, movedHoles);
+            if (polygonError.HasValue ()) {
+                return CreateFailedExecutionResult (APIERR_BADPARS, polygonError.Get ());
+            }
+            API_Guid guid = elemGuid;
+            err = ACAPI_Element_ChangeMemo (guid, APIMemoMask_Polygon | APIMemoMask_SideMaterials | APIMemoMask_EdgeTrims, &memo);
+            if (err != NoError) {
+                return CreateFailedExecutionResult (err, "Failed to change the polygon of the slab.");
+            }
+            return {};
+        }
+        default: {
+            if (outline.GetSize () > 1 && IsSame2DCoordinate (outline.GetFirst (), outline.GetLast ())) {
+                outline.Pop ();
+            }
+            API_ElementMemo memo = {};
+            const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+            API_Element changed = element;
+            if (!BuildHatchPolygonMemo (outline, arcs, movedHoles, changed.hatch.poly, memo)) {
+                return CreateFailedExecutionResult (APIERR_MEMFULL, "Failed to build the polygon of the fill.");
+            }
+            API_Element mask = {};
+            ACAPI_ELEMENT_MASK_CLEAR (mask);
+            ACAPI_ELEMENT_MASK_SET (mask, API_HatchType, poly);
+            err = ACAPI_Element_Change (&changed, &mask, &memo, APIMemoMask_Polygon, true);
+            if (err != NoError) {
+                return CreateFailedExecutionResult (err, "Failed to change the polygon of the fill.");
+            }
+            return {};
+        }
+    }
+}
+
+GS::ObjectState StretchElementsCommand::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    GS::Array<GS::ObjectState> elements;
+    parameters.Get ("elements", elements);
+    GS::Array<GS::ObjectState> polygonOS;
+    parameters.Get ("polygon", polygonOS);
+    const GS::ObjectState* vectorOS = parameters.Get ("vector");
+
+    USize nUnique = polygonOS.GetSize ();
+    if (nUnique > 1 && IsSame2DCoordinate (polygonOS[nUnique - 1], polygonOS[0])) {
+        --nUnique;
+    }
+    if (nUnique < 3) {
+        return CreateErrorResponse (APIERR_BADPARS, "polygon needs at least 3 distinct vertices.");
+    }
+    GS::Array<API_Coord> polygon;
+    for (USize i = 0; i < nUnique; ++i) {
+        polygon.Push (Get2DCoordinateFromObjectState (polygonOS[i]));
+    }
+    if (vectorOS == nullptr) {
+        return CreateErrorResponse (APIERR_BADPARS, "vector is missing.");
+    }
+    API_Coord3D vector = {};
+    vectorOS->Get ("x", vector.x);
+    vectorOS->Get ("y", vector.y);
+    vectorOS->Get ("z", vector.z);
+
+    API_EditPars stretchPars = {};
+    stretchPars.typeID = APIEdit_Stretch;
+    stretchPars.endC = vector;
+    API_EditPars dragPars = {};
+    dragPars.typeID = APIEdit_Drag;
+    dragPars.withDelete = true;
+    dragPars.endC = vector;
+
+    GS::ObjectState response;
+    const auto& executionResults = response.AddList<GS::ObjectState> ("executionResults");
+
+    ACAPI_CallUndoableCommand ("Stretch Elements", [&]() -> GSErrCode {
+        for (const GS::ObjectState& element : elements) {
+            const GS::ObjectState* elementId = element.Get ("elementId");
+            if (elementId == nullptr) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "elementId is missing"));
+                continue;
+            }
+            const API_Guid elemGuid = GetGuidFromObjectState (*elementId);
+
+            const GS::Optional<GS::ObjectState> notEditableResult = GetFailedExecutionResultIfNotEditable (elemGuid, "stretched");
+            if (notEditableResult.HasValue ()) {
+                executionResults (*notEditableResult);
+                continue;
+            }
+
+            API_Elem_Head header = {};
+            header.guid = elemGuid;
+            ACAPI_Element_GetHeader (&header);
+
+            GS::Array<API_ElementHotspot> hotspots;
+            GSErrCode err = ACAPI_Element_GetHotspots (elemGuid, &hotspots);
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, "Failed to read the nodes of the element."));
+                continue;
+            }
+
+            const API_NeigID nodeNeigID = GetNodeNeigID (header);
+            bool hasNodeNeigs = false;
+            for (const API_ElementHotspot& hotspot : hotspots) {
+                if (hotspot.first.neigID == nodeNeigID) {
+                    hasNodeNeigs = true;
+                    break;
+                }
+            }
+            const bool onlyNodes = hasNodeNeigs;
+
+            GS::Array<API_ElementHotspot> neigsInside;
+            USize nCandidates = 0;
+            for (const API_ElementHotspot& hotspot : hotspots) {
+                const bool inside = IsInsideOrOnPolygon ({ hotspot.second.x, hotspot.second.y }, polygon);
+                if (onlyNodes && hotspot.first.neigID != nodeNeigID) {
+                    continue;
+                }
+                ++nCandidates;
+                if (inside) {
+                    neigsInside.Push (hotspot);
+                }
+            }
+
+            if (neigsInside.IsEmpty ()) {
+                executionResults (CreateFailedExecutionResult (APIERR_BADPARS, "No node of the element is inside the polygon, so it was not stretched."));
+                continue;
+            }
+
+            if (neigsInside.GetSize () == nCandidates) {
+                // Every node is inside: the whole element moves, as with the marquee.
+                GS::Array<API_Neig> wholeElement = { API_Neig (elemGuid) };
+                err = ACAPI_Element_Edit (&wholeElement, dragPars);
+            } else {
+                // One edit per node, like clicking the node and dragging it by the vector.
+                for (const API_ElementHotspot& hotspot : neigsInside) {
+                    GS::Array<API_Neig> neigs = { hotspot.first };
+                    API_EditPars pars = stretchPars;
+                    pars.begC = hotspot.second;
+                    pars.endC = { pars.begC.x + vector.x, pars.begC.y + vector.y, pars.begC.z + vector.z };
+                    err = ACAPI_Element_Edit (&neigs, pars);
+                    if (err != NoError) {
+                        break;
+                    }
+                }
+            }
+            if (err != NoError) {
+                executionResults (CreateFailedExecutionResult (err, GS::UniString::Printf ("Failed to stretch element with guid %T.", APIGuidToString (elemGuid).ToPrintf ())));
+                continue;
+            }
+            if (neigsInside.GetSize () != nCandidates && !HaveNodesMoved (elemGuid, neigsInside)) {
+                // Archicad reported success and moved nothing (polygon vertices).
+                bool handled = false;
+                const GS::Optional<GS::ObjectState> failure = StretchPolygonVertices (elemGuid, polygon, vector, handled);
+                if (!handled) {
+                    executionResults (CreateFailedExecutionResult (APIERR_NOTSUPPORTED, "Archicad did not move the nodes of this element: its type cannot be stretched through the API."));
+                    continue;
+                }
+                if (failure.HasValue ()) {
+                    executionResults (*failure);
+                    continue;
+                }
+                executionResults (CreateSuccessfulExecutionResult ());
+                continue;
+            }
+            executionResults (CreateSuccessfulExecutionResult ());
         }
 
         return NoError;

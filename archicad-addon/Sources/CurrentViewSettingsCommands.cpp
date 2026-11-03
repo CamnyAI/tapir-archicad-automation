@@ -580,6 +580,11 @@ GSErrCode ApplyPenTableThroughTemporaryView (const API_WindowInfo& window, const
 }
 
 } // namespace
+
+GSErrCode FindProjectMapItemOfCurrentWindow (const API_WindowInfo& window, API_NavigatorItem& item)
+{
+    return FindProjectMapItemOfWindow (window, item);
+}
 #endif
 
 SetCurrentPenTableCommand::SetCurrentPenTableCommand () :

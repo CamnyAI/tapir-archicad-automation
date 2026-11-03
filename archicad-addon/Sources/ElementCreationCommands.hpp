@@ -274,6 +274,11 @@ public:
 // and marks the changed fields in the mask. Returns an error response for an invalid field.
 GS::Optional<GS::ObjectState> ApplyZoneSettings (const GS::ObjectState& details, API_Element& element, API_Element& mask);
 
+// Shared with StretchElementsCommand (ElementCommands.cpp): writes a new polygon (outline, arcs,
+// holes, as GetDetailsOfElements reports them) to a manual zone. Returns a failed execution
+// result when Archicad refuses it; via tells how it was written.
+GS::Optional<GS::ObjectState> WriteManualZonePolygon (const API_Element& element, const GS::Array<GS::ObjectState>& polygonOutline, const GS::Array<GS::ObjectState>& polygonArcs, const GS::Array<GS::ObjectState>& holes, GS::UniString& via);
+
 class MeasureTextsCommand : public CommandBase
 {
 public:

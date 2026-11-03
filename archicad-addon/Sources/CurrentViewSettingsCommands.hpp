@@ -2,6 +2,10 @@
 
 #include "CommandBase.hpp"
 
+// The Project Map item (story, section, the generic perspective or axonometry, ...) the given
+// window shows. Archicad 27 and later.
+GSErrCode FindProjectMapItemOfCurrentWindow (const API_WindowInfo& window, API_NavigatorItem& item);
+
 class GetCurrentModelViewOptionCommand : public CommandBase
 {
 public:

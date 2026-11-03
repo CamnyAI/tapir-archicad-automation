@@ -659,6 +659,10 @@ GSErrCode Initialize (void)
             elementCommands, "1.5.7",
             "Gets the details of the given elements (geometry parameters etc). Use the optional fields parameter to return only the fields you need and skip the computation of the others (for example floorPlanPolygons). An element of another database (a layout, a section, a worksheet ...) returns only its header fields (type, floor index, layer, draw index) with fromOtherDatabase set to true."
         );
+        err |= RegisterCommand<GetElementDefaultsCommand> (
+            elementCommands, "1.7.4",
+            "Gets the tool defaults of the given element types: the settings a new element of the type starts from (the Info Box with nothing selected), in the shape GetDetailsOfElements returns the details of an element. Fields that only a placed element has (polygons, holes, reference lines, morph bodies, text content, id) are left out. Supported for walls, columns, beams, slabs, roofs, shells, zones, doors, windows, skylights, objects, lamps, meshes, morphs, stairs, railings, curtain walls and the 2D drafting types."
+        );
         err |= RegisterCommand<SetDetailsOfElementsCommand> (
             elementCommands, "1.0.7",
             "Sets the details of the given elements (floor, layer, order, Element ID etc)."
@@ -850,6 +854,10 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<MirrorElementsCommand> (
             elementCommands, "1.7.2",
             "Mirrors elements across an axis given by two points on the floor plan, optionally as a copy. An element that cannot be edited (its layer is hidden or locked, it is locked, or it is not available in teamwork) gets a failed execution result naming the reason instead of being skipped silently."
+        );
+        err |= RegisterCommand<StretchElementsCommand> (
+            elementCommands, "1.7.4",
+            "Stretches elements like the Stretch command of Archicad with a marquee: the nodes of each element inside the given floor plan polygon move by the given vector, the other nodes stay; an element entirely inside the polygon is moved. Walls, beams and lines are stretched by Archicad (ACAPI_Element_Edit); the vertices of slabs, manual zones, fills, polylines, meshes and roofs, which that leaves in place, are moved in their polygon. The elements keep their GUIDs. An element with no node inside the polygon, or one that cannot be edited or stretched, gets a failed execution result."
         );
         err |= RegisterCommand<DeleteElementsCommand> (
             elementCommands, "1.2.1",
@@ -1147,7 +1155,15 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<ModifyRoofsCommand> (
             elementCommands, "1.4.0",
-            "Modifies multi-plane Roof elements based on the given parameters."
+            "Modifies Roof elements based on the given parameters: the structure, thickness, level and polygon of both kinds, the levels and eaves overhang of a multi-plane roof, and the pivot line and slope angle of a single-plane roof."
+        );
+        err |= RegisterCommand<ModifyShellsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Shell elements in place: the structure (Basic or Composite), the building material or composite and the thickness of a Basic shell. The elements keep their GUIDs."
+        );
+        err |= RegisterCommand<ModifySkylightsCommand> (
+            elementCommands, "1.7.4",
+            "Modifies Skylight elements in place: the floor plan position of the anchor point on the owner roof or shell, and the width and height (the A and B of the library part). The elements keep their GUIDs."
         );
         err |= RegisterCommand<ModifyMeshesCommand> (
             elementCommands, "1.5.4",
@@ -1211,7 +1227,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<ModifyZonesCommand> (
             elementCommands, "1.7.4",
-            "Modifies Zone elements: name, number, category, zone stamp, height, base offset, top link and floor thickness. Only the given fields are changed; the polygon is kept."
+            "Modifies Zone elements: name, number, category, zone stamp, height, base offset, top link and floor thickness, and the polygon (outline, arcs and holes) of a manual zone. Only the given fields are changed."
         );
         err |=RegisterCommand<MeasureTextsCommand> (
             elementCommands, "1.7.2",
@@ -1891,7 +1907,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<GetAvailableLibraryPartsCommand> (
             libraryCommands, "1.5.0",
-            "Lists library parts currently available to the project. Filter by typeId (e.g. 'Door', 'Window', 'Object', 'Lamp')."
+            "Lists library parts currently available to the project. Filter by typeId, or with subtypeOf by the subtype they descend from (Door, Window, Object, Lamp, Skylight): Archicad's own libraries list doors, windows and lamps with the Object type id."
         );
         err |= RegisterCommand<IsUsableGDLStringCommand> (
             libraryCommands, "1.7.3",
@@ -2110,6 +2126,18 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<SetActiveGraphicalOverrideCombinationCommand> (
             navigatorCommands, "1.7.2",
             "Applies a graphic override combination, given by id or by name, to the current window. The current window must be a model window (floor plan, section, elevation, 3D, ...). To remove the overrides, apply the project's 'No Overrides' combination. The saved view is not changed (see SetViewSettings for that). Available from Archicad 30."
+        );
+        err |= RegisterCommand<GetRenovationFiltersCommand> (
+            navigatorCommands, "1.7.4",
+            "Gets the renovation filters of the project (Document > Renovation > Renovation Filter). A renovationFilterId has the same shape as the renovationFilterGuid of GetViewSettings and SetViewSettings, so a filter listed here can be set on saved views too."
+        );
+        err |= RegisterCommand<GetActiveRenovationFilterCommand> (
+            navigatorCommands, "1.7.4",
+            "Gets the renovation filter of the current window (Document > Renovation > Renovation Filter): its renovationFilterId and name."
+        );
+        err |= RegisterCommand<SetActiveRenovationFilterCommand> (
+            navigatorCommands, "1.7.4",
+            "Sets the renovation filter of the current window (Document > Renovation > Renovation Filter), given by its renovationFilterId from GetRenovationFilters or by its name. Saved views keep their own filter: change that with SetViewSettings."
         );
         err |= RegisterCommand<GetGhostStorySettingsCommand> (
             navigatorCommands, "1.7.3",
@@ -2458,6 +2486,14 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<DeleteDesignOptionCombinationsCommand> (
             designOptionsCommands, "1.7.1",
             "Deletes the given design option combinations. Available from Archicad 29."
+        );
+        err |= RegisterCommand<GetDesignOptionCombinationOfWindowCommand> (
+            designOptionsCommands, "1.7.4",
+            "Gets the design option combination the floor plan window shows: its designOptionCombinationId and name, or a null designOptionCombinationId when the window shows only the main model or a custom set of design options (see status). Available from Archicad 29."
+        );
+        err |= RegisterCommand<SetDesignOptionCombinationOfWindowCommand> (
+            designOptionsCommands, "1.7.4",
+            "Sets the design option combination the floor plan window shows, or makes it show only the main model. Available from Archicad 29."
         );
         err |= RegisterCommand<SetDefaultDesignOptionCommand> (
             designOptionsCommands, "1.7.3",

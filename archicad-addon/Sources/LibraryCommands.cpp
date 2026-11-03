@@ -1,4 +1,7 @@
 #include "LibraryCommands.hpp"
+
+#include <string>
+#include <vector>
 #include "ObjectState.hpp"
 #include "MigrationHelper.hpp"
 #include "Folder.hpp"
@@ -1677,6 +1680,11 @@ GS::Optional<GS::UniString> GetAvailableLibraryPartsCommand::GetInputParametersS
             "filterByTypeId": {
                 "$ref": "#/LibraryPartType",
                 "description": "Optional. Filter by libpart type (matches the value returned by LibPartTypeIdToString)."
+            },
+            "subtypeOf": {
+                "type": "string",
+                "enum": ["Door", "Window", "Object", "Lamp", "Skylight"],
+                "description": "Optional. Only the library parts that descend from this Archicad subtype: Door (Wall), Window (Wall), Light (Lamp), Skylight, or for Object any Model Element that is not an opening or a light. Archicad's own libraries list doors, windows and lamps with the Object type id, so filterByTypeId does not find them; this does."
             }
         },
         "additionalProperties": false
@@ -1694,6 +1702,10 @@ GS::Optional<GS::UniString> GetAvailableLibraryPartsCommand::GetRawResponseSchem
                     "type": "object",
                     "properties": {
                         "guid": { "type": "string" },
+                        "parentGuid": {
+                            "type": "string",
+                            "description": "The main GUID of the library part it is a subtype of (its parent subtype). Missing for a part without one."
+                        },
                         "index": { "type": "integer" },
                         "documentName": { "type": "string" },
                         "fileName": { "type": "string" },
@@ -1784,6 +1796,75 @@ GS::ObjectState GetAvailableLibraryPartsCommand::Execute (const GS::ObjectState&
         return CreateErrorResponse (err, "Failed to enumerate library parts.");
     }
 
+    // subtypeOf: Archicad's subtype templates by their main GUIDs, which every language version
+    // shares (the templates' names are localized). A door descends from Door (Wall), a window from
+    // Window (Wall), a lamp from Light, a skylight from Skylight; an object is any Model Element that
+    // is not an opening or a light.
+    GS::UniString subtypeOf;
+    parameters.Get ("subtypeOf", subtypeOf);
+    const char* includeMain = nullptr;  // braces-free main GUIDs, for GS::Guid
+    std::vector<const char*> excludeMains;
+    if (subtypeOf == "Door") {
+        includeMain = "11E85B84-8DD1-491B-A2FE-337454A91545";
+    } else if (subtypeOf == "Window") {
+        includeMain = "4ABD0A6E-634B-4931-B3AA-9BEE01F35CDF";
+    } else if (subtypeOf == "Lamp") {
+        includeMain = "51A838E5-0F40-4F6D-A658-CF2845581749";
+    } else if (subtypeOf == "Skylight") {
+        includeMain = "0E0831DD-3766-4A60-BBE7-19A9537F76E3";
+    } else if (subtypeOf == "Object") {
+        includeMain = "103E8D2C-8230-42E1-9597-46F84CCE28C0";
+        excludeMains = { "6ACDA889-69B2-4EC5-936C-CB1DA7032A92", "51A838E5-0F40-4F6D-A658-CF2845581749" };
+    }
+    // The templates' full unique IDs (their revision part varies), found by main GUID among the loaded parts.
+    const auto fullUnID = [partCount] (const char* mainGuid) -> std::string {
+        const GS::Guid wanted (mainGuid);
+        for (Int32 i = 1; i <= partCount; ++i) {
+            API_LibPart part = {};
+            part.index = i;
+            if (ACAPI_LibraryPart_Get (&part) != NoError) {
+                continue;
+            }
+            std::string unID;
+            if (GS::UnID (part.ownUnID).GetMainGuid () == wanted) {
+                unID = part.ownUnID;
+            }
+            delete part.location;
+            if (!unID.empty ()) {
+                return unID;
+            }
+        }
+        return {};
+    };
+    std::string includeUnID;
+    std::vector<std::string> excludeUnIDs;
+    if (includeMain != nullptr) {
+        includeUnID = fullUnID (includeMain);
+        if (includeUnID.empty ()) {
+            return CreateErrorResponse (APIERR_BADNAME, "The loaded libraries do not have Archicad's " + subtypeOf + " subtype, so its library parts cannot be told apart.");
+        }
+        for (const char* excluded : excludeMains) {
+            std::string unID = fullUnID (excluded);
+            if (!unID.empty ()) {
+                excludeUnIDs.push_back (unID);
+            }
+        }
+    }
+    const auto isSubtype = [&] (const char* unID) {
+        if (includeUnID.empty ()) {
+            return true;
+        }
+        if (ACAPI_LibraryPart_CheckLibPartSubtypeOf (unID, includeUnID.c_str ()) != NoError) {
+            return false;
+        }
+        for (const std::string& excluded : excludeUnIDs) {
+            if (ACAPI_LibraryPart_CheckLibPartSubtypeOf (unID, excluded.c_str ()) == NoError) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     GS::ObjectState response;
     const auto& libpartAdder = response.AddList<GS::ObjectState> ("libraryParts");
     const auto& skippedAdder = response.AddList<GS::ObjectState> ("skippedSample");
@@ -1812,11 +1893,15 @@ GS::ObjectState GetAvailableLibraryPartsCommand::Execute (const GS::ObjectState&
         }
 
         const GS::UniString typeId = LibPartTypeIdToString (libPart.typeID);
-        const bool matchesFilter = filterTypeId.IsEmpty () || typeId == filterTypeId;
+        const bool matchesFilter = (filterTypeId.IsEmpty () || typeId == filterTypeId) &&
+            isSubtype (libPart.ownUnID);
 
         if (matchesFilter) {
             GS::ObjectState entry;
             entry.Add ("guid", GS::UnID (libPart.ownUnID).GetMainGuid ().ToUniString ());
+            if (libPart.parentUnID[0] != '\0') {
+                entry.Add ("parentGuid", GS::UnID (libPart.parentUnID).GetMainGuid ().ToUniString ());
+            }
             entry.Add ("index", static_cast<Int32> (libPart.index));
             entry.Add ("documentName", GS::UniString (libPart.docu_UName));
             entry.Add ("fileName", GS::UniString (libPart.file_UName));

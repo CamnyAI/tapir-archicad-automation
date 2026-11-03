@@ -1372,7 +1372,7 @@ GS::ObjectState CreateMEPRoutingElementsCommand::Execute (const GS::ObjectState&
                 std::map<UInt32, RoutingSegmentRectangularCrossSectionData> {},
                 std::map<UInt32, RoutingSegmentCircularCrossSectionData> {});
             if (newElementId.IsErr ()) {
-                elements (CreateErrorResponse (newElementId.UnwrapErr ().kind, "Failed to place the routing element."));
+                elements (CreateErrorResponse (newElementId.UnwrapErr ().kind, GS::UniString ("Failed to place the routing element: ") + newElementId.UnwrapErr ().text.c_str ()));
                 continue;
             }
             const ACAPI::MEP::UniqueID placedId = newElementId.Unwrap ();
@@ -1545,7 +1545,7 @@ GS::ObjectState CreateMEPElementsCommand::Execute (const GS::ObjectState& parame
             } ();
 
             if (newElementId.IsErr ()) {
-                elements (CreateErrorResponse (newElementId.UnwrapErr ().kind, "Failed to place the MEP element."));
+                elements (CreateErrorResponse (newElementId.UnwrapErr ().kind, GS::UniString ("Failed to place the MEP element: ") + newElementId.UnwrapErr ().text.c_str ()));
                 continue;
             }
 
@@ -4463,7 +4463,7 @@ GS::ObjectState CreateElectricalPanelsCommand::Execute (const GS::ObjectState& p
             const Orientation orientation = orientationOs != nullptr ? GetMEPOrientationFromObjectState (*orientationOs) : GetMEPOrientationFromObjectState (GS::ObjectState ());
             ACAPI::Result<ACAPI::MEP::UniqueID> newPanelId = panelDefault->Place (Get3DCoordinateFromObjectState (*position), orientation);
             if (newPanelId.IsErr ()) {
-                elements (CreateErrorResponse (newPanelId.UnwrapErr ().kind, "Failed to place the electrical panel."));
+                elements (CreateErrorResponse (newPanelId.UnwrapErr ().kind, GS::UniString ("Failed to place the electrical panel: ") + newPanelId.UnwrapErr ().text.c_str ()));
                 continue;
             }
             if (HasAnyField (panelData, { "xSize", "ySize" })) {
@@ -4654,7 +4654,7 @@ GS::ObjectState CreateElectricalDevicesCommand::Execute (const GS::ObjectState& 
             const Orientation orientation = orientationOs != nullptr ? GetMEPOrientationFromObjectState (*orientationOs) : GetMEPOrientationFromObjectState (GS::ObjectState ());
             ACAPI::Result<ACAPI::MEP::UniqueID> newDeviceId = deviceDefault->Place (Get3DCoordinateFromObjectState (*position), orientation);
             if (newDeviceId.IsErr ()) {
-                elements (CreateErrorResponse (newDeviceId.UnwrapErr ().kind, "Failed to place the electrical device."));
+                elements (CreateErrorResponse (newDeviceId.UnwrapErr ().kind, GS::UniString ("Failed to place the electrical device: ") + newDeviceId.UnwrapErr ().text.c_str ()));
                 continue;
             }
             if (HasAnyField (deviceData, { "xSize", "ySize" })) {

@@ -297,6 +297,16 @@ GS::Optional<GS::UniString> ApplySlabPolygonChange (
     const GS::Array<GS::ObjectState>& polygonArcs,
     const GS::Array<GS::ObjectState>& holes);
 
+// Writes a new outline/arcs/holes shape into the polygon of a memo read with ACAPI_Element_GetMemo
+// when it has the same contours with the same numbers of vertices: only the coordinates and the
+// arcs change, so the vertex ids and the edge data stay valid. Returns false, with the memo
+// untouched, when the shape has other contours or vertex counts. Defined in ExtendedElementCommands.cpp.
+bool OverwritePolygonInPlace (
+    API_ElementMemo& memo,
+    const GS::Array<GS::ObjectState>& polygonOutline,
+    const GS::Array<GS::ObjectState>& polygonArcs,
+    const GS::Array<GS::ObjectState>& holes);
+
 // Pushes the named favorite into the tool defaults of expectedTypeId, so a subsequent
 // ACAPI_Element_GetDefaults returns the favorite's settings as the baseline for a new
 // element. Mirrors ApplyFavoritesToElementDefaultsCommand: the element state plus the
