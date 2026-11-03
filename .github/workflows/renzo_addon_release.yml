@@ -1,9 +1,15 @@
 name: Renzo Add-On Release
 
-# Builds the add-on for every Archicad version in archicad-addon/devkits.json on a pushed tag
-# such as 1.7.4-renzo.1, signs and notarizes the macOS bundles, and publishes them as a GitHub
-# release that Renzo's desktop app downloads. Archicad 30 for macOS must build; every other
-# version is released when it builds and left out when it does not.
+# Builds the add-on on a pushed tag such as 1.7.4-renzo.1, signs and notarizes the macOS
+# bundles, and publishes them as a GitHub release that Renzo's desktop app downloads.
+#
+# By default only Archicad 30 for macOS is built. To build more Archicad versions from
+# archicad-addon/devkits.json, or Windows too, run the workflow by hand on the tag:
+#
+#   gh workflow run renzo_addon_release.yml --ref <tag> -f archicad="27 28 29 30" -f windows=true
+#
+# Archicad 30 for macOS must always be among them and must build; every other build is released
+# when it builds and left out when it does not.
 #
 # Signing uses the same five secrets as renzo-desktop's release workflow: CSC_LINK (the
 # Developer ID Application .p12, base64), CSC_KEY_PASSWORD, APPLE_API_KEY (the App Store Connect
@@ -14,6 +20,16 @@ on:
   push:
     tags:
       - '*-renzo.*'
+  workflow_dispatch:
+    inputs:
+      archicad:
+        description: 'Archicad versions to build, e.g. "30" or "27 28 29 30", or "all"; 30 is required'
+        default: '30'
+        type: string
+      windows:
+        description: 'Build the Windows add-ons too'
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -47,11 +63,28 @@ jobs:
           echo "::error::$GITHUB_REF_NAME points at a commit that is not on main."
           exit 1
         fi
+    # A pushed tag has no inputs: Archicad 30, macOS only.
     - name: Read the DevKit list
       id: list
+      env:
+        ARCHICAD: ${{ inputs.archicad || '30' }}
+        WINDOWS: ${{ inputs.windows && 'true' || 'false' }}
       run: |
-        echo "win=$(python3 tools/devkits.py matrix WIN)" >> "$GITHUB_OUTPUT"
-        echo "mac=$(python3 tools/devkits.py matrix MAC)" >> "$GITHUB_OUTPUT"
+        pick() {
+          python3 tools/devkits.py matrix "$1" | jq -c --arg want "$ARCHICAD" '
+            if ($want | test("^ *all *$"; "i")) then .
+            else ($want | [scan("[0-9]+") | tonumber]) as $v | map(select(.acVersion as $a | any($v[]; . == $a)))
+            end'
+        }
+        mac=$(pick MAC)
+        if ! jq -e 'any(.[]; .acVersion == 30)' <<< "$mac" > /dev/null; then
+          echo "::error::Archicad 30 is required, but \"$ARCHICAD\" leaves it out (or devkits.json does not list it)."
+          exit 1
+        fi
+        if [ "$WINDOWS" = true ]; then win=$(pick WIN); else win='[]'; fi
+        echo "macOS: $(jq -c 'map(.acVersion)' <<< "$mac"), Windows: $(jq -c 'map(.acVersion)' <<< "$win")"
+        echo "win=$win" >> "$GITHUB_OUTPUT"
+        echo "mac=$mac" >> "$GITHUB_OUTPUT"
 
   build_mac:
     needs: devkits
@@ -171,6 +204,7 @@ jobs:
 
   build_win:
     needs: devkits
+    if: needs.devkits.outputs.win != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -212,7 +246,7 @@ jobs:
 
   release:
     needs: [build_mac, build_win]
-    # The optional builds may fail; whether the required one is there is checked below.
+    # The optional builds may fail or be skipped; whether the required one is there is checked below.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -248,6 +282,8 @@ jobs:
       if: steps.secrets.outputs.present == 'true'
       uses: softprops/action-gh-release@v2
       with:
+        # Also when run by hand on the tag: the release is the tag's draft.
+        tag_name: ${{ github.ref_name }}
         files: artifacts/*
         fail_on_unmatched_files: true
         draft: true
